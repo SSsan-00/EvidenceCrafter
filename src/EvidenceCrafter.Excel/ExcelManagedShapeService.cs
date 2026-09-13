@@ -17,6 +17,98 @@ public sealed class ExcelManagedShapeService
   private const int XlMove = 2;
   private readonly ImageSizingService imageSizingService = new();
 
+  public ManagedShapeSelectionResult Inspect(WorkbookIdentity workbook, string worksheetName, string shapeName)
+  {
+    var validation = ValidateSession(workbook, requiresWrite: false);
+    if (validation is not null) return ManagedShapeSelectionResult.Failed(validation);
+    return WithWorkbook(workbook, ManagedShapeSelectionResult.Failed, (_, candidate) =>
+    {
+      object? sheet = null, shapes = null, shape = null;
+      try
+      {
+        sheet = ResolveWorksheet(candidate, worksheetName);
+        shapes = GetRequiredProperty(sheet, "Shapes");
+        shape = InvokeMethod(shapes, "Item", shapeName)!;
+        return TryReadManagedTarget(shape, workbook, out var target, out var reason)
+          ? new ManagedShapeSelectionResult(true, target, string.Empty)
+          : ManagedShapeSelectionResult.Failed(reason);
+      }
+      finally { ComRelease.Release(shape); ComRelease.Release(shapes); ComRelease.Release(sheet); }
+    });
+  }
+
+  /// <summary>Changes geometry in place, preserving picture data and validating the expected state.</summary>
+  public ManagedShapeMutationResult Resize(WorkbookIdentity workbook, ManagedShapeTarget expected, ManagedShapeTarget desired)
+  {
+    var validation = ValidateSession(workbook, requiresWrite: true);
+    if (validation is not null) return ManagedShapeMutationResult.Failed(validation);
+    if (!IsValidImage(new(desired.WidthPoints, desired.HeightPoints)))
+      return ManagedShapeMutationResult.Failed("画像サイズが不正です。");
+    return WithWorkbook(workbook, ManagedShapeMutationResult.Failed, (application, candidate) =>
+    {
+      object? sheet = null, shapes = null, shape = null;
+      var eventsEnabled = ReadBoolean(application, "EnableEvents");
+      var changed = false;
+      void Apply(ManagedShapeTarget target)
+      {
+        SetProperty(shape!, "LockAspectRatio", MsoFalse);
+        SetProperty(shape!, "Width", target.WidthPoints);
+        SetProperty(shape!, "Height", target.HeightPoints);
+        SetProperty(shape!, "AlternativeText", target.AlternativeText);
+        SetProperty(shape!, "LockAspectRatio", MsoTrue);
+      }
+      try
+      {
+        sheet = ResolveWorksheet(candidate, expected.WorksheetName);
+        if (!CanMutateWorkbook(candidate, workbook) || IsWorksheetProtected(sheet))
+          return ManagedShapeMutationResult.Failed("対象ブックまたはシートは変更できません。");
+        shapes = GetRequiredProperty(sheet, "Shapes");
+        shape = InvokeMethod(shapes, "Item", expected.ShapeName)!;
+        if (!TryReadManagedTarget(shape, workbook, out var current, out _) || !TargetUnchanged(expected, current))
+          return ManagedShapeMutationResult.Failed("参照画像が変更されたため倍率変更を停止しました。");
+        var count = Convert.ToInt32(GetRequiredProperty(shapes, "Count"), CultureInfo.InvariantCulture);
+        for (var i = 1; i <= count; i++)
+        {
+          var other = InvokeMethod(shapes, "Item", i)!;
+          try
+          {
+            if (Equals(GetRequiredProperty(other, "Name"), expected.ShapeName)) continue;
+            var left = ReadFiniteDouble(other, "Left");
+            var top = ReadFiniteDouble(other, "Top");
+            if (current.LeftPoints < left + ReadFiniteDouble(other, "Width") - 0.05 &&
+              current.LeftPoints + desired.WidthPoints > left + 0.05 &&
+              current.TopPoints < top + ReadFiniteDouble(other, "Height") - 0.05 &&
+              current.TopPoints + desired.HeightPoints > top + 0.05)
+              return ManagedShapeMutationResult.Failed("倍率変更後の画像が既存の図形と重なるため停止しました。");
+          }
+          finally { ComRelease.Release(other); }
+        }
+        SetProperty(application, "EnableEvents", false);
+        changed = true;
+        Apply(desired);
+        if (!TryReadManagedTarget(shape, workbook, out var after, out _) ||
+          !NearlyEqual(after.WidthPoints, desired.WidthPoints) || !NearlyEqual(after.HeightPoints, desired.HeightPoints))
+          throw new InvalidOperationException("画像サイズを検証できません。");
+        return new ManagedShapeMutationResult(true, true, current, after, "参照画像の倍率を変更しました。");
+      }
+      catch (Exception exception) when (IsAutomationFailure(exception))
+      {
+        if (changed)
+        {
+          try { Apply(expected); }
+          catch (Exception restoreError) when (IsAutomationFailure(restoreError))
+          { return ManagedShapeMutationResult.Failed("参照画像の倍率変更と復元に失敗しました。保存せず状態を確認してください。"); }
+        }
+        return ManagedShapeMutationResult.Failed($"参照画像の倍率変更に失敗しました: {exception.Message}");
+      }
+      finally
+      {
+        TryRestoreEvents(application, eventsEnabled);
+        ComRelease.Release(shape); ComRelease.Release(shapes); ComRelease.Release(sheet);
+      }
+    });
+  }
+
   public ManagedShapeSelectionResult InspectSelection(WorkbookIdentity workbook)
   {
     ArgumentNullException.ThrowIfNull(workbook);
@@ -257,7 +349,14 @@ public sealed class ExcelManagedShapeService
 
       replacementCreated = true;
       SetProperty(replacementShape, "Name", replacementName);
-      SetProperty(replacementShape, "AlternativeText", current.AlternativeText);
+      var replacementMetadata = (exactGeometry?.Metadata ?? current.Metadata) with
+      {
+        SourceDimensions = imageDimensions,
+        AppliedScale = exactGeometry is null
+          ? fitted.Scale
+          : exactGeometry.WidthPoints / imageDimensions.WidthPoints,
+      };
+      SetProperty(replacementShape, "AlternativeText", replacementMetadata.Serialize());
       SetProperty(replacementShape, "LockAspectRatio", MsoTrue);
       SetProperty(replacementShape, "Placement", XlMove);
       if (!TryReadManagedTarget(replacementShape, identity, out var replacement, out _) ||
@@ -599,7 +698,7 @@ public sealed class ExcelManagedShapeService
     }
   }
 
-  private static bool TargetUnchanged(ManagedShapeTarget expected, ManagedShapeTarget current) =>
+  internal static bool TargetUnchanged(ManagedShapeTarget expected, ManagedShapeTarget current) =>
     string.Equals(expected.ShapeName, current.ShapeName, StringComparison.Ordinal) &&
     string.Equals(expected.WorksheetName, current.WorksheetName, StringComparison.Ordinal) &&
     string.Equals(expected.AlternativeText, current.AlternativeText, StringComparison.Ordinal) &&
@@ -978,9 +1077,13 @@ public sealed class ExcelManagedShapeService
 
 public sealed record ManagedShapeMetadata(int Version, EvidenceSide Side, CellReference AnchorCell)
 {
+  public ImageDimensions? SourceDimensions { get; init; }
+  public double? AppliedScale { get; init; }
   public const string Prefix = "CraftEvidence:v1|";
 
-  public string Serialize() => $"{Prefix}Side={Side}|Cell=R{AnchorCell.Row}C{AnchorCell.Column}";
+  public string Serialize() => $"{Prefix}Side={Side}|Cell=R{AnchorCell.Row}C{AnchorCell.Column}" +
+    (SourceDimensions is { } size && AppliedScale is { } scale
+      ? FormattableString.Invariant($"|SourceW={size.WidthPoints:R}|SourceH={size.HeightPoints:R}|Scale={scale:R}") : "");
 
   public static bool IsManagedName(string name) =>
     name.StartsWith("EST_IMG_", StringComparison.Ordinal) &&
@@ -1024,7 +1127,18 @@ public sealed record ManagedShapeMetadata(int Version, EvidenceSide Side, CellRe
       return false;
     }
 
-    metadata = new ManagedShapeMetadata(1, side.Value, anchor.Value);
+    double? Number(string key)
+    {
+      var field = value.Split('|').FirstOrDefault(part => part.StartsWith(key + "=", StringComparison.Ordinal));
+      return field is not null && double.TryParse(field[(key.Length + 1)..], NumberStyles.Float,
+        CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) && number > 0 ? number : null;
+    }
+    metadata = new ManagedShapeMetadata(1, side.Value, anchor.Value)
+    {
+      SourceDimensions = Number("SourceW") is { } width && Number("SourceH") is { } height
+        ? new ImageDimensions(width, height) : null,
+      AppliedScale = Number("Scale"),
+    };
     return true;
   }
 }

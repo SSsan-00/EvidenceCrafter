@@ -43,4 +43,21 @@ public sealed class ImageSizingServiceTests
     Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
       service.FitToWidth(new ImageDimensions(double.NaN, 100), 200));
   }
+
+  [TestMethod]
+  public void AtScale_AllowsCommonPairEnlargementWithinWidth()
+  {
+    var result = service.AtScale(new ImageDimensions(100, 50), 268, 2.0);
+
+    Assert.AreEqual(200, result.WidthPoints, 0.001);
+    Assert.AreEqual(100, result.HeightPoints, 0.001);
+    Assert.AreEqual(2.0, result.Scale, 0.001);
+  }
+
+  [TestMethod]
+  public void AtScale_RejectsScaleThatExceedsAvailableWidth()
+  {
+    Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
+      service.AtScale(new ImageDimensions(100, 50), 268, 2.69));
+  }
 }

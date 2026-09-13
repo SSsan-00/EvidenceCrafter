@@ -20,7 +20,14 @@ public sealed record SnapshotShape(
   int EndRow,
   int StartColumn,
   int EndColumn,
-  bool IsManagedImage);
+  bool IsManagedImage)
+{
+  public double TopPoints { get; init; }
+  public double WidthPoints { get; init; }
+  public double HeightPoints { get; init; }
+  public double HorizontalOffsetPoints { get; init; }
+  public ImageDimensions? SourceDimensions { get; init; }
+}
 
 /// <summary>
 /// Immutable, COM-free worksheet state used by layout analysis and placement planning.

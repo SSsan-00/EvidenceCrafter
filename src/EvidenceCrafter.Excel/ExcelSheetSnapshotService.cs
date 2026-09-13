@@ -609,9 +609,10 @@ public sealed class ExcelSheetSnapshotService
           topLeft = GetRequiredProperty(shape, "TopLeftCell");
           bottomRight = GetRequiredProperty(shape, "BottomRightCell");
           var name = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.CurrentCulture) ?? string.Empty;
+          ManagedShapeMetadata? metadata = null;
           var isManaged = ManagedShapeMetadata.IsManagedName(name) &&
             TryGetProperty(shape, "AlternativeText", out var text) &&
-            ManagedShapeMetadata.TryParse(Convert.ToString(text, CultureInfo.InvariantCulture), out _);
+            ManagedShapeMetadata.TryParse(Convert.ToString(text, CultureInfo.InvariantCulture), out metadata);
           var start = ReadShapeCellReference(topLeft);
           var end = ReadShapeCellReference(bottomRight);
           result.Add(new SnapshotShape(
@@ -620,7 +621,16 @@ public sealed class ExcelSheetSnapshotService
             end.Row,
             start.Column,
             end.Column,
-            isManaged));
+            isManaged)
+          {
+            TopPoints = Convert.ToDouble(GetRequiredProperty(shape, "Top"), CultureInfo.InvariantCulture),
+            WidthPoints = Convert.ToDouble(GetRequiredProperty(shape, "Width"), CultureInfo.InvariantCulture),
+            HeightPoints = Convert.ToDouble(GetRequiredProperty(shape, "Height"), CultureInfo.InvariantCulture),
+            HorizontalOffsetPoints = isManaged
+              ? Convert.ToDouble(GetRequiredProperty(shape, "Left"), CultureInfo.InvariantCulture) -
+                Convert.ToDouble(GetRequiredProperty(topLeft, "Left"), CultureInfo.InvariantCulture) : 0,
+            SourceDimensions = metadata?.SourceDimensions,
+          });
         }
         finally
         {

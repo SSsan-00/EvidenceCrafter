@@ -64,7 +64,25 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             }
           }
           var boundary = GetRequiredProperty(sheet, "Range", $"D{boundaryRow}");
-          try { Assert.AreEqual("Existing boundary content", GetRequiredProperty(boundary, "Value2")); }
+          try
+          {
+            object? boundaryValue = null;
+            try { boundaryValue = GetRequiredProperty(boundary, "Value2"); } catch (InvalidOperationException) { }
+            if (!Equals(boundaryValue, "Existing boundary content"))
+            {
+              object? used = null;
+              object? found = null;
+              var foundContent = false;
+              try
+              {
+                used = GetRequiredProperty(sheet, "UsedRange");
+                found = InvokeMethod(used, "Find", "Existing boundary content");
+                foundContent = found is not null;
+              }
+              finally { Release(found); Release(used); }
+              Assert.IsTrue(foundContent, $"{Path.GetFileName(source)}: boundary content was lost (original row {boundaryRow}).");
+            }
+          }
           finally { Release(boundary); }
           var bounds = new List<RectangleF>();
           var finalSnapshot = new ExcelSheetSnapshotService().Capture(identity, "B1", 3).Snapshot!;

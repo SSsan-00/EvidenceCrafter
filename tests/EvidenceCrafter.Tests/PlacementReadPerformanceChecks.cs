@@ -192,12 +192,22 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         bottomRight = GetRequiredProperty(shape, "BottomRightCell");
         var name = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.InvariantCulture)!;
         var metadata = Convert.ToString(GetRequiredProperty(shape, "AlternativeText"), CultureInfo.InvariantCulture);
+        var parsed = ManagedShapeMetadata.TryParse(metadata, out var managedMetadata) ? managedMetadata : null;
         result.Add(new SnapshotShape(name,
           Convert.ToInt32(GetRequiredProperty(topLeft, "Row"), CultureInfo.InvariantCulture),
           Convert.ToInt32(GetRequiredProperty(bottomRight, "Row"), CultureInfo.InvariantCulture),
           Convert.ToInt32(GetRequiredProperty(topLeft, "Column"), CultureInfo.InvariantCulture),
           Convert.ToInt32(GetRequiredProperty(bottomRight, "Column"), CultureInfo.InvariantCulture),
-          ManagedShapeMetadata.IsManagedName(name) && ManagedShapeMetadata.TryParse(metadata, out _)));
+          ManagedShapeMetadata.IsManagedName(name) && parsed is not null)
+        {
+          TopPoints = Convert.ToDouble(GetRequiredProperty(shape, "Top"), CultureInfo.InvariantCulture),
+          WidthPoints = Convert.ToDouble(GetRequiredProperty(shape, "Width"), CultureInfo.InvariantCulture),
+          HeightPoints = Convert.ToDouble(GetRequiredProperty(shape, "Height"), CultureInfo.InvariantCulture),
+          HorizontalOffsetPoints = ManagedShapeMetadata.IsManagedName(name) && parsed is not null
+            ? Convert.ToDouble(GetRequiredProperty(shape, "Left"), CultureInfo.InvariantCulture) -
+              Convert.ToDouble(GetRequiredProperty(topLeft, "Left"), CultureInfo.InvariantCulture) : 0,
+          SourceDimensions = parsed?.SourceDimensions,
+        });
       }
       finally { Release(bottomRight); Release(topLeft); Release(shape); }
     }

@@ -32,7 +32,8 @@ public sealed class ExcelImagePlacementService
     string imagePath,
     ImageDimensions imageDimensions,
     double? availableWidthPoints = null,
-    double horizontalMarginPoints = 6)
+    double horizontalMarginPoints = 6,
+    double? scaleOverride = null)
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
@@ -112,7 +113,8 @@ public sealed class ExcelImagePlacementService
             imagePath,
             imageDimensions,
             availableWidthPoints,
-            horizontalMarginPoints);
+            horizontalMarginPoints,
+            scaleOverride);
           return result ?? ImagePlacementResult.Failed("The selected Workbook could not be matched in its Excel instance.");
         }
         catch (Exception exception) when (IsAutomationFailure(exception))
@@ -344,7 +346,8 @@ public sealed class ExcelImagePlacementService
     string imagePath,
     ImageDimensions imageDimensions,
     double? availableWidthPoints,
-    double horizontalMarginPoints)
+    double horizontalMarginPoints,
+    double? scaleOverride)
   {
     if (TryGetProperty(runningObject, "Workbooks", out var workbooks))
     {
@@ -374,7 +377,8 @@ public sealed class ExcelImagePlacementService
                 imagePath,
                 imageDimensions,
                 availableWidthPoints,
-                horizontalMarginPoints);
+                horizontalMarginPoints,
+                scaleOverride);
             }
           }
           finally
@@ -415,7 +419,8 @@ public sealed class ExcelImagePlacementService
           imagePath,
           imageDimensions,
           availableWidthPoints,
-          horizontalMarginPoints)
+          horizontalMarginPoints,
+          scaleOverride)
         : null;
     }
     finally
@@ -434,7 +439,8 @@ public sealed class ExcelImagePlacementService
     string imagePath,
     ImageDimensions imageDimensions,
     double? availableWidthPoints,
-    double horizontalMarginPoints)
+    double horizontalMarginPoints,
+    double? scaleOverride)
   {
     if (!WorkbookWindowMatchesIdentity(workbook, identity))
     {
@@ -476,7 +482,9 @@ public sealed class ExcelImagePlacementService
       var cellTop = ReadDoubleProperty(targetCell, "Top");
       var cellWidth = ReadDoubleProperty(targetCell, "Width");
       var availableWidth = availableWidthPoints ?? Math.Max(cellWidth * 5.0 - (horizontalMarginPoints * 2), 24.0);
-      var fittedImage = imageSizingService.FitToWidth(imageDimensions, availableWidth);
+      var fittedImage = scaleOverride is { } scale
+        ? imageSizingService.AtScale(imageDimensions, availableWidth, scale)
+        : imageSizingService.FitToWidth(imageDimensions, availableWidth);
 
       // Revalidate the session and the live Workbook state immediately before
       // mutating Excel.  The selected identity is only a snapshot; the
@@ -509,7 +517,12 @@ public sealed class ExcelImagePlacementService
       }
 
       SetProperty(shape, "Name", shapeName);
-      var alternativeText = $"CraftEvidence:v1|Side={side}|Cell=R{focusCell.Value.Row}C{focusCell.Value.Column}";
+      var metadata = new ManagedShapeMetadata(1, side, focusCell.Value)
+      {
+        SourceDimensions = imageDimensions,
+        AppliedScale = fittedImage.Scale,
+      };
+      var alternativeText = metadata.Serialize();
       SetProperty(shape, "AlternativeText", alternativeText);
       SetProperty(shape, "LockAspectRatio", MsoTrue);
       SetProperty(shape, "Placement", XlMove);
@@ -533,7 +546,7 @@ public sealed class ExcelImagePlacementService
           shapeName,
           resolvedWorksheetName,
           alternativeText,
-          new ManagedShapeMetadata(1, side, focusCell.Value),
+          metadata,
           focusCell.Value,
           ReadDoubleProperty(shape, "Left"),
           ReadDoubleProperty(shape, "Top"),

@@ -44,7 +44,8 @@ public sealed record PlacementRequest(
   IReadOnlyDictionary<int, double> RowHeights,
   int ImageGapRows = 2,
   int TailRows = 4,
-  double DefaultRowHeightPoints = 15.0);
+  double DefaultRowHeightPoints = 15.0,
+  double? ScaleOverride = null);
 
 public sealed record PlacementPlan(
   PlacementMode Mode,

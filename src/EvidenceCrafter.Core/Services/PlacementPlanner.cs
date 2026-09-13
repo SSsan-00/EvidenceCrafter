@@ -36,7 +36,9 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
     }
 
     ValidateLayoutAndContents(request);
-    var fittedImage = imageSizingService.FitToWidth(request.Image, request.AvailableWidthPoints);
+    var fittedImage = request.ScaleOverride is { } scale
+      ? imageSizingService.AtScale(request.Image, request.AvailableWidthPoints, scale)
+      : imageSizingService.FitToWidth(request.Image, request.AvailableWidthPoints);
     var caseContents = request.Contents
       .Where(content =>
         content.EndRow >= request.Layout.StartRow &&

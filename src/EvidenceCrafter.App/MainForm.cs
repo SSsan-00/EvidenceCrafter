@@ -1323,7 +1323,8 @@ public sealed class MainForm : Form
         result.AppliedInsertions,
         result.PlacedImages,
         cleanupSnapshot,
-        result.Analysis!.LayoutAnalysis!.Layout!);
+        result.Analysis!.LayoutAnalysis!.Layout!,
+        result.ReferenceResize);
 
       WriteDiagnostic(
         DiagnosticEventKind.MutationResult,
@@ -2011,7 +2012,8 @@ public sealed class MainForm : Form
     IReadOnlyList<AppliedRowInsertion> insertions,
     IReadOnlyList<AutomaticPlacedImage> images,
     RowDeletionSnapshot? cleanupSnapshot,
-    EvidenceCaseLayout expectedLayout)
+    EvidenceCaseLayout expectedLayout,
+    PairedImageResize? referenceResize = null)
   {
     if (historyImages.Count != images.Count)
     {
@@ -2047,8 +2049,9 @@ public sealed class MainForm : Form
           side,
               imagePath,
           historyImages[index].Dimensions,
-              images[index].Plan.Image.WidthPoints,
-          horizontalMarginPoints));
+              images[index].AvailableWidthPoints,
+          horizontalMarginPoints,
+          images[index].Plan.Image.Scale));
         if (placed.Succeeded)
         {
           targets[index] = placed.Target!;
@@ -2066,7 +2069,7 @@ public sealed class MainForm : Form
       }
     }
 
-    AddHistory(new HistoryEntry(
+    var placementEntry = new HistoryEntry(
       "自動配置",
       async () =>
       {
@@ -2187,7 +2190,38 @@ public sealed class MainForm : Form
         SetStatus("自動配置をやり直しました。");
         return true;
       },
-      cleanupSnapshot is null ? null : cleanupSnapshot.Dispose));
+      cleanupSnapshot is null ? null : cleanupSnapshot.Dispose);
+    if (referenceResize is null)
+    {
+      AddHistory(placementEntry);
+      return;
+    }
+    AddHistory(placementEntry with
+    {
+      Undo = async () =>
+      {
+        if (!await StaTask.Run(() => referenceResize.Matches(workbook, true)))
+        {
+          SetStatus("参照画像が変更されたためUndoを停止しました。");
+          return false;
+        }
+        if (!await placementEntry.Undo()) return false;
+        var restored = await StaTask.Run(() => referenceResize.SetApplied(workbook, false));
+        if (restored.Succeeded) return true;
+        var compensated = await placementEntry.Redo();
+        SetStatus(restored.Message + (compensated ? "" : " 配置の復元にも失敗しました。状態を確認してください。"));
+        return false;
+      },
+      Redo = async () =>
+      {
+        var resized = await StaTask.Run(() => referenceResize.SetApplied(workbook, true));
+        if (!resized.Succeeded) { SetStatus(resized.Message); return false; }
+        if (await placementEntry.Redo()) return true;
+        var restored = await StaTask.Run(() => referenceResize.SetApplied(workbook, false));
+        if (!restored.Succeeded) SetStatus(restored.Message);
+        return false;
+      },
+    });
   }
 
   private void AddManagedReplacementHistory(

@@ -295,6 +295,101 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
+  public void AnalyzeSnapshot_PairsOppositeImageByOrdinal_AndUsesCommonScale()
+  {
+    var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
+    var snapshot = Snapshot(signals) with
+    {
+      Shapes = [new SnapshotShape("old-1", 5, 10, 19, 25, true)
+      {
+        WidthPoints = 100,
+        HeightPoints = 50,
+        SourceDimensions = new ImageDimensions(200, 100),
+      }],
+    };
+
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(
+      snapshot,
+      EvidenceSide.New,
+      [new AutomaticPlacementImage("new.png", new ImageDimensions(100, 50))]);
+
+    Assert.IsTrue(result.Succeeded, result.Message);
+    var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected an opposite-side pair.");
+    Assert.AreEqual("old-1", pair.ShapeName);
+    Assert.AreEqual(1.34, pair.Scale, 0.001);
+    Assert.AreEqual(268, pair.Width, 0.001);
+    Assert.AreEqual(134, result.Steps[0].Plan.Image.WidthPoints, 0.001);
+  }
+
+  [TestMethod]
+  public void AnalyzeSnapshot_PairsSecondImageByOrdinal_NotNearestImage()
+  {
+    var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
+    var snapshot = Snapshot(signals) with
+    {
+      Shapes =
+      [
+        new SnapshotShape("new-1", 5, 10, 4, 10, true) { WidthPoints = 80, HeightPoints = 40, SourceDimensions = new ImageDimensions(100, 50) },
+        new SnapshotShape("new-2", 20, 25, 4, 10, true) { WidthPoints = 120, HeightPoints = 60, SourceDimensions = new ImageDimensions(120, 60) },
+        new SnapshotShape("old-1", 5, 10, 19, 25, true) { WidthPoints = 90, HeightPoints = 45, SourceDimensions = new ImageDimensions(90, 45) },
+      ],
+    };
+
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(
+      snapshot,
+      EvidenceSide.Old,
+      [new AutomaticPlacementImage("old.png", new ImageDimensions(60, 30))]);
+
+    Assert.IsTrue(result.Succeeded, result.Message);
+    var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected the second opposite-side image.");
+    Assert.AreEqual("new-2", pair.ShapeName);
+    Assert.AreEqual(2.233, pair.Scale, 0.001);
+  }
+
+  [TestMethod]
+  public void AnalyzeSnapshot_LegacyPairMatchesDisplayedWidth()
+  {
+    var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
+    var snapshot = Snapshot(signals) with
+    {
+      Shapes = [new SnapshotShape("legacy-old", 5, 10, 19, 25, true)
+      {
+        WidthPoints = 100,
+        HeightPoints = 50,
+      }],
+    };
+
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(
+      snapshot,
+      EvidenceSide.New,
+      [new AutomaticPlacementImage("new.png", new ImageDimensions(50, 25))]);
+
+    Assert.IsTrue(result.Succeeded, result.Message);
+    var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected a legacy opposite-side pair.");
+    Assert.IsTrue(pair.Legacy);
+    Assert.AreEqual(5.36, pair.Scale, 0.001);
+    Assert.AreEqual(268, pair.Width, 0.001);
+  }
+
+  [TestMethod]
+  public void ManagedShapeMetadata_RoundTripsScaleAndKeepsLegacyFormatReadable()
+  {
+    var modern = new ManagedShapeMetadata(1, EvidenceSide.New, new CellReference(5, 4))
+    {
+      SourceDimensions = new ImageDimensions(800, 400),
+      AppliedScale = 0.5,
+    };
+    Assert.IsTrue(ManagedShapeMetadata.TryParse(modern.Serialize(), out var parsed));
+    Assert.AreEqual(new ImageDimensions(800, 400), parsed.SourceDimensions);
+    Assert.AreEqual(0.5, parsed.AppliedScale!.Value, 0.001);
+
+    var legacy = new ManagedShapeMetadata(1, EvidenceSide.Old, new CellReference(5, 19)).Serialize();
+    Assert.IsTrue(ManagedShapeMetadata.TryParse(legacy, out var legacyParsed));
+    Assert.IsNull(legacyParsed.SourceDimensions);
+    Assert.IsNull(legacyParsed.AppliedScale);
+  }
+
+  [TestMethod]
   public void ContentOccupancy_IgnoresShapeOutsideEvidenceColumns_ButKeepsCrossSideShape()
   {
     var signals = FixtureLoader.LoadLayout("default-final-case.json");

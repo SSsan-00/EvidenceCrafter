@@ -166,6 +166,8 @@ public sealed class ExcelAutomaticPlacementService
       {
         var sideColumns = layout.RegionFor(side);
         var width = AvailableWidth(snapshot, sideColumns, horizontalMarginPoints);
+        var pair = images.Count == 1
+          ? FindPair(snapshot, layout, side, images[index].Dimensions, width, horizontalMarginPoints) : null;
         var plan = placementPlanner.Plan(new PlacementRequest(
           layout,
           side,
@@ -174,8 +176,9 @@ public sealed class ExcelAutomaticPlacementService
           index == 0 ? snapshot.ActiveCell.Row : layout.EndRow,
           index == 0 && preferActiveGap,
           contents,
-          rowHeights));
-        plans.Add(new AutomaticPlacementStep(index, images[index], plan, width));
+          rowHeights,
+          ScaleOverride: images[index].ScaleOverride ?? pair?.Scale));
+        plans.Add(new AutomaticPlacementStep(index, images[index], plan, width) { Pair = pair });
         ApplyPlanToModel(plan, side, ref layout, contents, rowHeights);
       }
 
@@ -213,7 +216,8 @@ public sealed class ExcelAutomaticPlacementService
     bool preferActiveGap = false,
     double horizontalMarginPoints = 6,
     AutomaticPlacementAnalysisResult? preparedAnalysis = null,
-    string? requestedCaseLabel = null)
+    string? requestedCaseLabel = null,
+    bool referencePrepared = false)
   {
     var validation = ValidateImages(images, requireFiles: true);
     if (validation is not null)
@@ -242,6 +246,32 @@ public sealed class ExcelAutomaticPlacementService
     }
 
     var appliedRows = new List<AppliedRowInsertion>();
+    if (!referencePrepared && images.Count == 1 && initialAnalysis.Steps[0].Pair is { } pair)
+    {
+      var service = new ExcelManagedShapeService();
+      var inspected = service.Inspect(workbook, initialAnalysis.WorksheetName, pair.ShapeName);
+      if (!inspected.Succeeded || inspected.Shape is not { } before)
+        return AutomaticPlacementResult.Failed(inspected.Message, initialAnalysis);
+      var metadata = before.Metadata with { AppliedScale = pair.Legacy ? null : pair.Scale };
+      var desired = before with { WidthPoints = pair.Width, HeightPoints = pair.Height,
+        Metadata = metadata, AlternativeText = metadata.Serialize() };
+      var extra = pair.Height - before.HeightPoints;
+      var count = extra > 0.05 ? checked((int)Math.Ceiling(extra / 15) + 1) : 0;
+      if ((long)pair.EndRow + count > ExcelWorksheetLimits.MaximumRow)
+        return AutomaticPlacementResult.Failed("必要な行数がシート上限を超えます。", initialAnalysis);
+      var reference = new PairedImageResize(before, desired, count > 0
+        ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域") : null);
+      var prepared = reference.SetApplied(workbook, true);
+      if (!prepared.Succeeded) return AutomaticPlacementResult.Failed(prepared.Message, initialAnalysis);
+      var result = PlaceImages(workbook, worksheetName, side,
+        [images[0] with { ScaleOverride = pair.Scale }], preferActiveGap, horizontalMarginPoints,
+        requestedCaseLabel: initialAnalysis.CaseLabel, referencePrepared: true);
+      if (result.Succeeded) return result with { ReferenceResize = reference };
+      if (!result.CompensationSucceeded) return result with { ReferenceResize = reference };
+      var undone = reference.SetApplied(workbook, false);
+      return result with { CompensationSucceeded = undone.Succeeded,
+        Message = result.Message + (undone.Succeeded ? "" : " " + undone.Message) };
+    }
     var placed = new List<AutomaticPlacedImage>();
     var executedSteps = new List<AutomaticPlacementStep>();
     for (var index = 0; index < images.Count; index++)
@@ -306,7 +336,8 @@ public sealed class ExcelAutomaticPlacementService
         verifiedStep.Image.ImagePath,
         verifiedStep.Image.Dimensions,
         verifiedStep.AvailableWidthPoints,
-        horizontalMarginPoints);
+        horizontalMarginPoints,
+        verifiedStep.Plan.Image.Scale);
       if (!placement.Succeeded)
       {
         return Compensate(workbook, initialAnalysis, placed, appliedRows, placement.Message);
@@ -319,7 +350,8 @@ public sealed class ExcelAutomaticPlacementService
         placement.FocusCell,
         placement.FocusSucceeded,
         placement.Target!,
-        verifiedStep.Plan));
+        verifiedStep.Plan,
+        verifiedStep.AvailableWidthPoints));
       executedSteps.Add(verifiedStep);
     }
 
@@ -567,6 +599,40 @@ public sealed class ExcelAutomaticPlacementService
     return availableWidth;
   }
 
+  private static PairedImagePlan? FindPair(SheetSnapshot snapshot, EvidenceCaseLayout layout,
+    EvidenceSide side, ImageDimensions image, double width, double margin)
+  {
+    if (layout.Kind != SideLayoutKind.Both) return null;
+    SnapshotShape[] Images(EvidenceSide selected)
+    {
+      var columns = layout.RegionFor(selected);
+      return snapshot.Shapes.Where(shape => shape.IsManagedImage &&
+        shape.StartRow >= layout.StartRow && shape.EndRow <= layout.EndRow &&
+        shape.StartColumn >= columns.FirstColumn && shape.EndColumn <= columns.LastColumn)
+        .OrderBy(shape => shape.StartRow).ThenBy(shape => shape.TopPoints)
+        .ThenBy(shape => shape.Name, StringComparer.Ordinal).ToArray();
+    }
+    var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
+    var reference = Images(opposite).ElementAtOrDefault(Images(side).Length);
+    if (reference is null) return null;
+    // Old snapshots without picture geometry cannot establish a safe reference scale.
+    if (reference.WidthPoints <= 0 || reference.HeightPoints <= 0) return null;
+    var region = layout.RegionFor(opposite);
+    var remainingWidth = Enumerable.Range(reference.StartColumn, region.LastColumn - reference.StartColumn + 1)
+      .Sum(column => snapshot.ColumnWidths.GetValueOrDefault(column)) - reference.HorizontalOffsetPoints - margin;
+    var referenceWidth = Math.Min(AvailableWidth(snapshot, region, margin), remainingWidth);
+    if (referenceWidth <= 0) throw new InvalidOperationException("参照画像の配置幅がありません。");
+    if (reference.SourceDimensions is { } source)
+    {
+      var scale = Math.Min(width / image.WidthPoints, referenceWidth / source.WidthPoints);
+      return new(reference.Name, scale, source.WidthPoints * scale, source.HeightPoints * scale, reference.EndRow, false);
+    }
+    // Legacy pictures lack their original dimensions: match displayed widths, preserving aspect ratios.
+    var commonWidth = Math.Min(width, referenceWidth);
+    return new(reference.Name, commonWidth / image.WidthPoints, commonWidth,
+      reference.HeightPoints * commonWidth / reference.WidthPoints, reference.EndRow, true);
+  }
+
   private static string Fingerprint(SheetSnapshot snapshot)
   {
     var text = new StringBuilder()
@@ -623,7 +689,8 @@ public sealed class ExcelAutomaticPlacementService
     {
       text.Append('S').Append(shape.Name).Append(',').Append(shape.StartRow).Append(',')
         .Append(shape.EndRow).Append(',').Append(shape.StartColumn).Append(',')
-        .Append(shape.EndColumn).Append(',').Append(shape.IsManagedImage).Append('|');
+        .Append(shape.EndColumn).Append(',').Append(shape.IsManagedImage).Append('|')
+        .Append(FormattableString.Invariant($"{shape.TopPoints:R},{shape.WidthPoints:R},{shape.HeightPoints:R},{shape.HorizontalOffsetPoints:R},{shape.SourceDimensions?.WidthPoints:R},{shape.SourceDimensions?.HeightPoints:R}|"));
     }
 
     foreach (var height in snapshot.RowHeights.OrderBy(pair => pair.Key))
@@ -681,13 +748,19 @@ public sealed class ExcelAutomaticPlacementService
     string Message);
 }
 
-public sealed record AutomaticPlacementImage(string ImagePath, ImageDimensions Dimensions);
+public sealed record AutomaticPlacementImage(string ImagePath, ImageDimensions Dimensions)
+{
+  public double? ScaleOverride { get; init; }
+}
 
 public sealed record AutomaticPlacementStep(
   int Index,
   AutomaticPlacementImage Image,
   PlacementPlan Plan,
-  double AvailableWidthPoints);
+  double AvailableWidthPoints)
+{
+  public PairedImagePlan? Pair { get; init; }
+}
 
 public sealed record AutomaticPlacementAnalysisResult(
   bool Succeeded,
@@ -716,7 +789,8 @@ public sealed record AutomaticPlacedImage(
   CellReference FocusCell,
   bool FocusSucceeded,
   ManagedShapeTarget Target,
-  PlacementPlan Plan);
+  PlacementPlan Plan,
+  double AvailableWidthPoints = 0);
 
 public sealed record AutomaticPlacementResult(
   bool Succeeded,
@@ -727,6 +801,7 @@ public sealed record AutomaticPlacementResult(
   IReadOnlyList<string> CompensationErrors,
   string Message)
 {
+  public PairedImageResize? ReferenceResize { get; init; }
   public static AutomaticPlacementResult Failed(
     string message,
     AutomaticPlacementAnalysisResult? analysis = null) =>
