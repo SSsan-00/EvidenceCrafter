@@ -121,8 +121,9 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
 
       if (insertion is not null)
       {
-        if (request.PreferredStartRow is not null)
-          throw new InvalidOperationException("対応する反対Side画像と同じ開始行では画像全体と必要な余白を確保できません。既存コンテンツを確認してください。");
+        if (request.PreferredStartRow is not null && followingContents.Any(content =>
+          !IsImageLike(content) && content.StartRow <= imageEndRow))
+          throw new InvalidOperationException("対応画像の配置領域にセル内容があるため配置できません。");
         insertions.Add(insertion);
       }
     }

@@ -120,13 +120,15 @@ public sealed class PlacementPlannerTests
   }
 
   [TestMethod]
-  public void Plan_PairedImage_RejectsFollowingImageInsideRequiredGap()
+  public void Plan_PairedImage_MovesFollowingImageOutsideRequiredGap()
   {
     var request = CreateRequest([new ContentSpan(EvidenceSide.New, 9, 12, ContentKind.Shape)]) with
     {
       PreferredStartRow = 5,
     };
-    Assert.ThrowsExactly<InvalidOperationException>(() => planner.Plan(request));
+    var plan = planner.Plan(request);
+    var insertion = plan.Insertions.Single(row => row.AtRow == 9);
+    Assert.IsGreaterThan(plan.EndRow + 2, 9 + insertion.Count);
   }
 
   [TestMethod]

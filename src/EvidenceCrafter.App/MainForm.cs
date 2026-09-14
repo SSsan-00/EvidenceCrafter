@@ -2394,6 +2394,16 @@ public sealed class MainForm : Form
             return false;
           }
           inserted.Add(insertion);
+          if (!await RunRowHistoryOperationAsync(() => rowMutationService.NormalizeInsertedRows(
+            workbook, insertion.WorksheetName, insertion.StartRow, insertion.Count, 15)))
+          {
+            foreach (var applied in inserted.AsEnumerable().Reverse())
+            {
+              _ = await RunRowHistoryOperationAsync(() => rowMutationService.DeleteRowsIfSafe(
+                workbook, applied.WorksheetName, applied.StartRow, applied.Count));
+            }
+            return false;
+          }
         }
 
         for (var index = 0; index < images.Count; index++)

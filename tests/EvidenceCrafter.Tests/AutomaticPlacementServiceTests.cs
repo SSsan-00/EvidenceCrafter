@@ -374,6 +374,38 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
+  public void AnalyzeSnapshot_NextBandStartsBelowBothSides()
+  {
+    var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
+    {
+      Shapes = [new SnapshotShape("new-1", 5, 10, 4, 10, true),
+        new SnapshotShape("old-1", 5, 20, 19, 25, true)],
+    };
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.New,
+      [new AutomaticPlacementImage("new.png", new ImageDimensions(60, 30))]);
+    Assert.IsTrue(result.Succeeded, result.Message);
+    Assert.AreEqual(23, result.Steps[0].Plan.StartRow);
+  }
+
+  [TestMethod]
+  public void AnalyzeSnapshot_TallBackfillReservesRowsBeforeOppositeSecondImage()
+  {
+    var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
+    {
+      Shapes = [new SnapshotShape("new-1", 5, 10, 4, 10, true)
+        { WidthPoints = 120, HeightPoints = 60, SourceDimensions = new ImageDimensions(120, 60) },
+        new SnapshotShape("new-2", 15, 20, 4, 10, true)],
+    };
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.Old,
+      [new AutomaticPlacementImage("old.png", new ImageDimensions(120, 240))]);
+    Assert.IsTrue(result.Succeeded, result.Message);
+    var plan = result.Steps[0].Plan;
+    Assert.AreEqual(5, plan.StartRow);
+    var insertion = plan.Insertions.Single(row => row.AtRow == 15);
+    Assert.IsGreaterThan(plan.EndRow + 2, 15 + insertion.Count);
+  }
+
+  [TestMethod]
   public void ManagedShapeMetadata_RoundTripsScaleAndKeepsLegacyFormatReadable()
   {
     var modern = new ManagedShapeMetadata(1, EvidenceSide.New, new CellReference(5, 4))

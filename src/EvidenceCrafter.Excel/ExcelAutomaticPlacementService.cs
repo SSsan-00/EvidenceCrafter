@@ -160,6 +160,16 @@ public sealed class ExcelAutomaticPlacementService
     {
       var layout = analyzed.Layout;
       var contents = occupancyAnalyzer.Analyze(snapshot, layout).ToList();
+      // Reserve the other side's earlier and later image rows as shared bands.
+      // Only the matching ordinal may occupy the same rows as the new image.
+      if (images.Count == 1 && layout.Kind == SideLayoutKind.Both)
+      {
+        var ordinal = CaseImages(snapshot, layout, side).Length;
+        var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
+        contents.AddRange(CaseImages(snapshot, layout, opposite)
+          .Where((_, index) => index != ordinal)
+          .Select(shape => new ContentSpan(null, shape.StartRow, shape.EndRow, ContentKind.ManagedImage)));
+      }
       var rowHeights = snapshot.RowHeights.ToDictionary(pair => pair.Key, pair => pair.Value);
       var plans = new List<AutomaticPlacementStep>(images.Count);
       for (var index = 0; index < images.Count; index++)
@@ -617,17 +627,8 @@ public sealed class ExcelAutomaticPlacementService
     EvidenceSide side, ImageDimensions image, double width, double margin)
   {
     if (layout.Kind != SideLayoutKind.Both) return null;
-    SnapshotShape[] Images(EvidenceSide selected)
-    {
-      var columns = layout.RegionFor(selected);
-      return snapshot.Shapes.Where(shape => shape.IsManagedImage &&
-        shape.StartRow >= layout.StartRow && shape.EndRow <= layout.EndRow &&
-        shape.StartColumn >= columns.FirstColumn && shape.EndColumn <= columns.LastColumn)
-        .OrderBy(shape => shape.StartRow).ThenBy(shape => shape.TopPoints)
-        .ThenBy(shape => shape.Name, StringComparer.Ordinal).ToArray();
-    }
     var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
-    var reference = Images(opposite).ElementAtOrDefault(Images(side).Length);
+    var reference = CaseImages(snapshot, layout, opposite).ElementAtOrDefault(CaseImages(snapshot, layout, side).Length);
     if (reference is null) return null;
     // Old snapshots without picture geometry cannot establish a safe reference scale.
     if (reference.WidthPoints <= 0 || reference.HeightPoints <= 0) return null;
@@ -647,6 +648,16 @@ public sealed class ExcelAutomaticPlacementService
     return new(reference.Name, commonWidth / image.WidthPoints, commonWidth,
       reference.HeightPoints * commonWidth / reference.WidthPoints,
       reference.StartRow, reference.EndRow, true);
+  }
+
+  private static SnapshotShape[] CaseImages(SheetSnapshot snapshot, EvidenceCaseLayout layout, EvidenceSide side)
+  {
+    var columns = layout.RegionFor(side);
+    return snapshot.Shapes.Where(shape => shape.IsManagedImage &&
+      shape.StartRow >= layout.StartRow && shape.EndRow <= layout.EndRow &&
+      shape.StartColumn >= columns.FirstColumn && shape.EndColumn <= columns.LastColumn)
+      .OrderBy(shape => shape.StartRow).ThenBy(shape => shape.TopPoints)
+      .ThenBy(shape => shape.Name, StringComparer.Ordinal).ToArray();
   }
 
   private static string Fingerprint(SheetSnapshot snapshot)

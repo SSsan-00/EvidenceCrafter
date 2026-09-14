@@ -147,7 +147,7 @@ public sealed class ExcelRowMutationService
   }
 
   /// <summary>Normalizes only the rows just inserted by this application.</summary>
-  internal RowMutationResult NormalizeInsertedRows(
+  public RowMutationResult NormalizeInsertedRows(
     WorkbookIdentity workbook,
     string worksheetName,
     int startRow,
