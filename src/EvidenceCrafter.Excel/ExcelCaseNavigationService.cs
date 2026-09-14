@@ -30,7 +30,7 @@ public sealed class ExcelCaseNavigationService
       return CaseNavigationResult.Failed("CaseはX-X形式で入力してください（例: 1-2）。");
     }
 
-    var captured = snapshotService.CaptureForNavigation(workbook, worksheetName, includeWorksheetNames: true);
+    var captured = snapshotService.CaptureForNavigation(workbook, worksheetName, includeWorksheetNames: true, includeShapes: false);
     if (!captured.Succeeded || captured.Snapshot is null)
     {
       return CaseNavigationResult.Failed(captured.Message);
@@ -59,7 +59,7 @@ public sealed class ExcelCaseNavigationService
 
     var layout = block.Layout;
     var firstColumn = layout.RegionFor(block.Side).FirstColumn;
-    var target = FocusCell(layout, firstColumn, direction);
+    var target = FocusCell(layout, firstColumn);
     var focused = focusService.FocusPlacedImage(workbook, snapshot.WorksheetName, target);
     var caseLabel = ExcelAutomaticPlacementService.FormatCaseLabel(block.Anchor);
     return focused.Succeeded
@@ -89,7 +89,7 @@ public sealed class ExcelCaseNavigationService
         continue;
       }
 
-      var captured = snapshotService.CaptureForNavigation(workbook, candidate);
+      var captured = snapshotService.CaptureForNavigation(workbook, candidate, includeShapes: false);
       if (!captured.Succeeded || captured.Snapshot is null)
       {
         failures.Add($"{candidate}: {captured.Message}");
@@ -105,7 +105,7 @@ public sealed class ExcelCaseNavigationService
         var block = direction == CaseNavigationDirection.Previous ? blocks[^1] : blocks[0];
         var layout = block.Layout;
         var region = layout.RegionFor(block.Side);
-        var target = FocusCell(layout, region.FirstColumn, direction);
+        var target = FocusCell(layout, region.FirstColumn);
         var focused = focusService.FocusPlacedImage(workbook, candidate, target);
         if (focused.Succeeded)
         {
@@ -125,7 +125,7 @@ public sealed class ExcelCaseNavigationService
         ? edgeBlocks[^1]
         : edgeBlocks[0];
       var edgeRegion = edgeBlock.Layout.RegionFor(edgeBlock.Side);
-      var edgeCell = FocusCell(edgeBlock.Layout, edgeRegion.FirstColumn, direction);
+      var edgeCell = FocusCell(edgeBlock.Layout, edgeRegion.FirstColumn);
       var edgeFocused = focusService.FocusPlacedImage(workbook, current.WorksheetName, edgeCell);
       if (edgeFocused.Succeeded)
       {
@@ -146,9 +146,8 @@ public sealed class ExcelCaseNavigationService
 
   private static CellReference FocusCell(
     EvidenceCaseLayout layout,
-    int firstColumn,
-    CaseNavigationDirection direction) =>
-    new(direction == CaseNavigationDirection.Next ? layout.StartRow + 1 : layout.EndRow, firstColumn + 1);
+    int firstColumn) =>
+    new(layout.StartRow + 1, firstColumn + 1);
 
   internal static IReadOnlyList<string> AdjacentWorksheetNames(
     IReadOnlyList<string> names, string current, CaseNavigationDirection direction)

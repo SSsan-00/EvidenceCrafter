@@ -42,7 +42,7 @@ internal sealed class PreviewDialog : Form
     {
       AutoSize = true,
       Text = BuildContext(workbookLabel, worksheetName, side, analysis),
-      ForeColor = UiTheme.Text,
+      ForeColor = UiTheme.TextOn(UiTheme.SurfaceMuted),
       BackColor = UiTheme.SurfaceMuted,
       Padding = new Padding(8),
     };

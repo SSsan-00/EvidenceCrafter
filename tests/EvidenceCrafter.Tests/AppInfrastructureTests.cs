@@ -50,6 +50,8 @@ public sealed class AppInfrastructureTests
       GlobalShortcutEnabled = false,
       AlwaysOnTop = true,
       DarkMode = true,
+      ThemeColorArgb = Color.FromArgb(48, 96, 160).ToArgb(),
+      WindowOpacityPercent = 3,
     });
 
     var loaded = store.Load();
@@ -58,9 +60,26 @@ public sealed class AppInfrastructureTests
     Assert.IsFalse(loaded.GlobalShortcutEnabled);
     Assert.IsTrue(loaded.AlwaysOnTop);
     Assert.IsTrue(loaded.DarkMode);
+    Assert.AreEqual(100, loaded.EffectiveThemeIntensity);
+    Assert.AreEqual(Color.FromArgb(48, 96, 160).ToArgb(), loaded.EffectiveThemeColor.ToArgb());
+    Assert.AreEqual(40, loaded.EffectiveWindowOpacityPercent);
     var savedJson = File.ReadAllText(path);
     Assert.IsFalse(savedJson.Contains("Workbook", StringComparison.Ordinal));
     Assert.IsFalse(savedJson.Contains("Side", StringComparison.Ordinal));
+  }
+
+  [TestMethod]
+  public void SettingsStore_PreservesIntermediateThemeIntensity()
+  {
+    using var directory = new TemporaryDirectory();
+    var path = Path.Combine(directory.Path, "settings.json");
+    var store = new AppSettingsStore(path);
+
+    store.Save(new EvidenceCrafterSettings { ThemeIntensity = 35 });
+
+    var loaded = store.Load();
+    Assert.AreEqual(35, loaded.EffectiveThemeIntensity);
+    Assert.IsFalse(loaded.DarkMode);
   }
 
   [TestMethod]

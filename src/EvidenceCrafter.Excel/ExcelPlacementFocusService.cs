@@ -20,7 +20,10 @@ public sealed class ExcelPlacementFocusService : IPlacementFocusService
       return false;
     NativeMethods.GetWindowThreadProcessId(window, out var processId);
     if (processId != workbook.ProcessId) return false;
-    if (NativeMethods.IsIconic(window)) NativeMethods.ShowWindow(window, 9);
+
+    // The workbook identity is bound to this top-level Excel window.  Maximizing
+    // that handle keeps other Excel windows at their current size.
+    NativeMethods.ShowWindow(window, NativeMethods.MaximizeWindowCommand);
     return NativeMethods.SetForegroundWindow(window);
   }
   public FocusResult FocusPlacedImage(
@@ -411,10 +414,10 @@ public sealed class ExcelPlacementFocusService : IPlacementFocusService
 
   private static class NativeMethods
   {
+    internal const int MaximizeWindowCommand = 3; // SW_MAXIMIZE
+
     [DllImport("user32.dll")]
     internal static extern bool SetForegroundWindow(nint window);
-    [DllImport("user32.dll")]
-    internal static extern bool IsIconic(nint window);
     [DllImport("user32.dll")]
     internal static extern bool ShowWindow(nint window, int command);
     [DllImport("ole32.dll")]

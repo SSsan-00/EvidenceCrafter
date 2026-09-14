@@ -89,7 +89,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         object? shape = null;
         try
         {
-          shape = InvokeMethod(shapes, "AddShape", 1, 1000f, 100f + index * 30, 120f, 20f)!;
+          shape = InvokeMethod(shapes, "AddShape", 1, 1000f, 60f + index * 30, 120f, 20f)!;
           SetProperty(shape, "Name", index % 2 == 0 ? $"EST_IMG_{index:X32}" : $"Benchmark_{index}");
           SetProperty(shape, "AlternativeText", new ManagedShapeMetadata(1, EvidenceSide.Old, new CellReference(5, 19)).Serialize());
         }
@@ -119,6 +119,19 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsTrue(captured.Succeeded, captured.Message);
         Assert.HasCount(60, captured.Snapshot!.Shapes);
       });
+      var expectedLayout = snapshotService.CaptureForNavigation(identity, sheetName).Snapshot!.LayoutSignals;
+      MeasurePlacementRead("navigation-structure/60-shapes", () =>
+      {
+        var captured = snapshotService.CaptureForNavigation(identity, sheetName, includeShapes: false);
+        Assert.IsTrue(captured.Succeeded, captured.Message);
+        Assert.IsEmpty(captured.Snapshot!.Shapes);
+        Assert.AreEqual(System.Text.Json.JsonSerializer.Serialize(expectedLayout),
+          System.Text.Json.JsonSerializer.Serialize(captured.Snapshot.LayoutSignals));
+      });
+      MeasurePlacementRead("manual-selection-full/60-shapes", () =>
+      {
+        Assert.IsTrue(snapshotService.Capture(identity, sheetName).Succeeded);
+      }, samples: 3);
       var shapeReader = typeof(ExcelSheetSnapshotService).GetMethod(
         "ReadShapes", BindingFlags.NonPublic | BindingFlags.Static)!;
       var expectedShapes = ReadIndividualShapeBounds(shapes);

@@ -1,4 +1,5 @@
 using System.Drawing.Imaging;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using EvidenceCrafter.Core.Models;
 using EvidenceCrafter.Core.Services;
@@ -24,8 +25,8 @@ public sealed class MainForm : Form
   private readonly AppSettingsStore settingsStore = new();
   private readonly DiagnosticLog diagnosticLog = new();
   private readonly ComboBox workbookSelector = new();
-  private readonly TextBox worksheetNameBox = new();
-  private readonly TextBox caseLabelBox = new();
+  private readonly ComboBox worksheetNameBox = new();
+  private readonly ComboBox caseLabelBox = new();
   private readonly NumericUpDown insertRowCountBox = new();
   private readonly TextBox deleteCaseStartBox = new();
   private readonly TextBox deleteCaseEndBox = new();
@@ -44,6 +45,10 @@ public sealed class MainForm : Form
   private readonly Button refreshButton = new();
   private readonly Button captureScreenButton = new();
   private readonly ComboBox advanceModeBox = new();
+  private readonly ThemeGradientSlider opacitySlider = new();
+  private readonly ThemeGradientSlider themeSlider = new();
+  private readonly ThemeColorPickerButton themeColorButton = new();
+  private readonly System.Windows.Forms.Timer themeSaveTimer = new() { Interval = 300 };
   private readonly System.Windows.Forms.Timer clipboardRetryTimer = new();
   private readonly System.Windows.Forms.Timer selectionChangeTimer = new() { Interval = 250 };
   private bool clipboardListenerRegistered;
@@ -75,6 +80,7 @@ public sealed class MainForm : Form
   private bool placementContextRefreshPendingForce;
   private ExcelSelectionChangedEventArgs? latestSelectionChange;
   private AutomaticPlacementAnalysisResult? cachedPlacementContext;
+  private string? worksheetChoicesWorkbookId;
 
   private bool CanUpdateUi =>
     IsHandleCreated &&
@@ -88,7 +94,8 @@ public sealed class MainForm : Form
     caseMaintenanceService = new ExcelCaseMaintenanceService(rowMutationService);
     replacementLayoutService = new ExcelManagedReplacementLayoutService(rowMutationService);
     settings = settingsStore.Load();
-    UiTheme.SetDarkMode(settings.DarkMode);
+    UiTheme.SetThemeIntensity(settings.EffectiveThemeIntensity);
+    UiTheme.SetThemeColor(settings.EffectiveThemeColor);
     clipboardRetryTimer.Tick += (_, _) =>
     {
       clipboardRetryTimer.Stop();
@@ -98,6 +105,11 @@ public sealed class MainForm : Form
     {
       selectionChangeTimer.Stop();
       await RefreshPlacementContextAsync();
+    };
+    themeSaveTimer.Tick += (_, _) =>
+    {
+      themeSaveTimer.Stop();
+      SaveThemeSettings();
     };
     sessionMonitor.SelectionChanged += SessionMonitorSelectionChanged;
     InitializeUi();
@@ -148,6 +160,7 @@ public sealed class MainForm : Form
       ClearHistoryStack(undoHistory);
       ClearHistoryStack(redoHistory);
       sessionMonitor.Dispose();
+      themeSaveTimer.Dispose();
       clipboardRetryTimer.Dispose();
       selectionChangeTimer.Dispose();
       try
@@ -196,6 +209,7 @@ public sealed class MainForm : Form
     AutoScaleMode = AutoScaleMode.Dpi;
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
+    Opacity = settings.EffectiveWindowOpacityPercent / 100d;
 
     var layout = new TableLayoutPanel
     {
@@ -227,23 +241,61 @@ public sealed class MainForm : Form
     };
     UiTheme.StyleText(title);
     header.Controls.Add(title, 0, 0);
-    var darkMode = new ThemedCheckBox
+    var themePanel = new FlowLayoutPanel
     {
-      Text = "ダークモード", AutoSize = true, Anchor = AnchorStyles.Right,
-      Checked = settings.DarkMode, Margin = new Padding(8, 0, 7, 8),
+      AutoSize = true,
+      Anchor = AnchorStyles.Right,
+      WrapContents = false,
+      FlowDirection = FlowDirection.LeftToRight,
+      Margin = new Padding(8, 0, 7, 8),
+      Padding = new Padding(0, 2, 0, 0),
     };
-    UiTheme.StyleText(darkMode);
-    darkMode.CheckedChanged += (_, _) =>
+    UiTheme.StyleCanvas(themePanel);
+    var transparentLabel = CreateThemeLabel("◌", "透過が強い");
+    var opaqueLabel = CreateThemeLabel("●", "不透明");
+    var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ");
+    var darkThemeLabel = CreateThemeLabel("☾", "ダークテーマ");
+    opacitySlider.AccessibleName = "ウィンドウの不透明度";
+    opacitySlider.MinimumValue = 40;
+    opacitySlider.MaximumValue = 100;
+    opacitySlider.Value = settings.EffectiveWindowOpacityPercent;
+    opacitySlider.Width = 118;
+    opacitySlider.Height = 28;
+    opacitySlider.BackColor = UiTheme.Canvas;
+    opacitySlider.Margin = new Padding(6, 0, 6, 0);
+    opacitySlider.ValueChanged += (_, _) =>
     {
-      UiTheme.SetDarkMode(darkMode.Checked);
-      settings = settings with { DarkMode = darkMode.Checked };
-      UiTheme.Refresh(this);
-      UpdateSideButtonColors();
-      try { settingsStore.Save(settings); }
-      catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-      { SetStatus($"ダークモード設定を保存できません: {exception.Message}"); }
+      Opacity = opacitySlider.Value / 100d;
+      settings = settings with { WindowOpacityPercent = opacitySlider.Value };
+      QueueSettingsSave();
     };
-    header.Controls.Add(darkMode, 1, 0);
+    themeColorButton.AccessibleName = "テーマ色を選択";
+    sideToolTip.SetToolTip(themeColorButton, "テーマ色を選択");
+    UiTheme.StyleThemeColorButton(themeColorButton, Font);
+    themeColorButton.Click += (_, _) => SelectThemeColor();
+    themeSlider.Value = settings.EffectiveThemeIntensity;
+    themeSlider.Width = 142;
+    themeSlider.Height = 28;
+    themeSlider.BackColor = UiTheme.Canvas;
+    themeSlider.Margin = new Padding(6, 0, 6, 0);
+    themeSlider.ValueChanged += (_, _) =>
+    {
+      UiTheme.SetThemeIntensity(themeSlider.Value);
+      settings = settings with
+      {
+        ThemeIntensity = themeSlider.Value,
+        DarkMode = themeSlider.Value >= 50,
+      };
+      RefreshThemeUi();
+    };
+    themePanel.Controls.Add(transparentLabel);
+    themePanel.Controls.Add(opacitySlider);
+    themePanel.Controls.Add(opaqueLabel);
+    themePanel.Controls.Add(lightThemeLabel);
+    themePanel.Controls.Add(themeSlider);
+    themePanel.Controls.Add(darkThemeLabel);
+    themePanel.Controls.Add(themeColorButton);
+    header.Controls.Add(themePanel, 1, 0);
     var topmost = new ThemedCheckBox
     {
       Text = "常に最前面", AutoSize = true, Anchor = AnchorStyles.Right,
@@ -291,10 +343,14 @@ public sealed class MainForm : Form
     sheetLabel.Margin = new Padding(3, 0, 6, 0);
     primaryTargetRow.Controls.Add(sheetLabel);
     worksheetNameBox.Width = 120;
-    StyleTextBox(worksheetNameBox);
-    worksheetNameBox.PlaceholderText = "シート名";
-    worksheetNameBox.TextChanged += (_, _) => MarkPlacementTargetOverridden();
-    worksheetNameBox.Validated += async (_, _) => await RefreshManualSideLayoutAsync();
+    StyleSelectionBox(worksheetNameBox);
+    worksheetNameBox.DropDownStyle = ComboBoxStyle.DropDownList;
+    worksheetNameBox.SelectedIndexChanged += async (_, _) =>
+    {
+      if (updatingPlacementContext) return;
+      MarkPlacementTargetOverridden();
+      await RefreshManualSideLayoutAsync();
+    };
     primaryTargetRow.Controls.Add(worksheetNameBox);
     var sidePanel = new FlowLayoutPanel
     {
@@ -312,13 +368,17 @@ public sealed class MainForm : Form
     newSideButton.CheckedChanged += (_, _) =>
     {
       UpdateSideButtonColors();
+      if (updatingPlacementContext || !newSideButton.Checked) return;
       MarkPlacementTargetOverridden();
     };
     oldSideButton.CheckedChanged += (_, _) =>
     {
       UpdateSideButtonColors();
+      if (updatingPlacementContext || !oldSideButton.Checked) return;
       MarkPlacementTargetOverridden();
     };
+    newSideButton.Click += async (_, _) => await FocusSelectedSideAsync(newSideButton);
+    oldSideButton.Click += async (_, _) => await FocusSelectedSideAsync(oldSideButton);
     sidePanel.Controls.Add(newSideButton);
     sidePanel.Controls.Add(oldSideButton);
 
@@ -326,15 +386,13 @@ public sealed class MainForm : Form
     caseLabel.Margin = new Padding(12, 0, 6, 0);
     primaryTargetRow.Controls.Add(caseLabel);
     caseLabelBox.Width = 86;
-    StyleTextBox(caseLabelBox);
-    caseLabelBox.PlaceholderText = "自動";
-    caseLabelBox.Validated += async (_, _) => await RefreshManualSideLayoutAsync();
-    caseLabelBox.TextChanged += (_, _) =>
+    StyleSelectionBox(caseLabelBox);
+    caseLabelBox.DropDownStyle = ComboBoxStyle.DropDownList;
+    caseLabelBox.SelectedIndexChanged += async (_, _) =>
     {
-      if (!updatingPlacementContext)
-      {
-        placementTargetOverridden = true;
-      }
+      if (updatingPlacementContext) return;
+      MarkPlacementTargetOverridden();
+      await RefreshManualSideLayoutAsync();
     };
     primaryTargetRow.Controls.Add(caseLabelBox);
     previousCaseButton.Text = "前のCASE";
@@ -491,6 +549,13 @@ public sealed class MainForm : Form
     textBox.Margin = new Padding(0, 4, 0, 4);
   }
 
+  private static void StyleSelectionBox(ComboBox comboBox)
+  {
+    UiTheme.StyleComboBox(comboBox);
+    comboBox.Margin = new Padding(0, 4, 0, 4);
+    comboBox.IntegralHeight = false;
+  }
+
   private void UpdateSideButtonColors()
   {
     ApplySideButtonColor(newSideButton);
@@ -501,7 +566,7 @@ public sealed class MainForm : Form
   {
     var selected = button.Checked;
     button.BackColor = selected ? UiTheme.Primary : UiTheme.Surface;
-    button.ForeColor = selected ? Color.White : UiTheme.Text;
+    button.ForeColor = UiTheme.TextOn(button.BackColor);
     button.FlatAppearance.BorderColor = selected
       ? UiTheme.PrimaryHover
       : UiTheme.Border;
@@ -523,6 +588,24 @@ public sealed class MainForm : Form
       Anchor = AnchorStyles.Left,
     };
     UiTheme.StyleText(label);
+    return label;
+  }
+
+  private static Label CreateThemeLabel(string icon, string accessibleName)
+  {
+    var label = new Label
+    {
+      AutoSize = false,
+      Size = new Size(22, 28),
+      Text = icon,
+      AccessibleName = accessibleName,
+      AccessibleRole = AccessibleRole.Indicator,
+      Font = new Font("Segoe UI Symbol", 15F, FontStyle.Regular),
+      TextAlign = ContentAlignment.MiddleCenter,
+      Anchor = AnchorStyles.None,
+      Margin = new Padding(0),
+    };
+    UiTheme.StyleText(label, muted: true);
     return label;
   }
 
@@ -572,6 +655,12 @@ public sealed class MainForm : Form
       return;
     }
 
+    await RefreshWorksheetChoicesAsync(workbook);
+    if (requestVersion != Volatile.Read(ref placementContextRequestVersion) || !CanUpdateUi)
+    {
+      return;
+    }
+
     var analysis = await StaTask.Run(() => automaticPlacementService.Analyze(
       workbook,
       "ActiveSheet",
@@ -601,10 +690,107 @@ public sealed class MainForm : Form
       ? caseLabelBox.Text.Trim()
       : null;
 
+  private async Task RefreshWorksheetChoicesAsync(WorkbookIdentity workbook)
+  {
+    if (string.Equals(worksheetChoicesWorkbookId, workbook.ConnectionId, StringComparison.Ordinal) &&
+      worksheetNameBox.Items.Count > 0)
+    {
+      return;
+    }
+
+    var captured = await StaTask.Run(() => new ExcelSheetSnapshotService().CaptureForNavigation(
+      workbook, "ActiveSheet", includeWorksheetNames: true, includeShapes: false));
+    if (!CanUpdateUi || workbookSelector.SelectedItem is not WorkbookIdentity selected ||
+      !string.Equals(selected.ConnectionId, workbook.ConnectionId, StringComparison.Ordinal))
+    {
+      return;
+    }
+
+    if (captured.Snapshot is not { } snapshot || snapshot.WorksheetNames.Count == 0)
+    {
+      worksheetChoicesWorkbookId = null;
+      ReplaceComboItems(worksheetNameBox, [], preferred: null);
+      ReplaceComboItems(caseLabelBox, [], preferred: null);
+      return;
+    }
+
+    worksheetChoicesWorkbookId = workbook.ConnectionId;
+    ReplaceComboItems(worksheetNameBox, snapshot.WorksheetNames, snapshot.WorksheetName);
+  }
+
+  private void SetCaseChoices(SheetLayoutSignals? signals, string? preferred)
+  {
+    IReadOnlyList<string> choices = signals is null
+      ? []
+      : ExcelAutomaticPlacementService.ConfirmedAnchors(signals)
+        .Select(ExcelAutomaticPlacementService.FormatCaseLabel)
+        .Where(label => !string.IsNullOrWhiteSpace(label))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    ReplaceComboItems(caseLabelBox, choices, preferred);
+  }
+
+  private void ReplaceComboItems(ComboBox comboBox, IEnumerable<string> values, string? preferred)
+  {
+    var items = values
+      .Where(value => !string.IsNullOrWhiteSpace(value))
+      .Distinct(StringComparer.OrdinalIgnoreCase)
+      .ToArray();
+    var wasUpdating = updatingPlacementContext;
+    updatingPlacementContext = true;
+    try
+    {
+      comboBox.BeginUpdate();
+      try
+      {
+        if (!comboBox.Items.Cast<string>().SequenceEqual(items, StringComparer.Ordinal))
+        {
+          comboBox.Items.Clear();
+          comboBox.Items.AddRange(items);
+        }
+        var selected = !string.IsNullOrWhiteSpace(preferred)
+          ? items.FirstOrDefault(item => string.Equals(item, preferred, StringComparison.OrdinalIgnoreCase))
+          : null;
+        comboBox.SelectedItem = selected ?? (items.Length == 0 ? null : items[0]);
+      }
+      finally
+      {
+        comboBox.EndUpdate();
+      }
+    }
+    finally
+    {
+      updatingPlacementContext = wasUpdating;
+    }
+  }
+
+  private void SetComboSelection(ComboBox comboBox, string value)
+  {
+    if (string.IsNullOrWhiteSpace(value))
+    {
+      comboBox.SelectedIndex = -1;
+      return;
+    }
+
+    var existing = comboBox.Items.Cast<object>()
+      .Select(item => Convert.ToString(item, CultureInfo.CurrentCulture))
+      .FirstOrDefault(item => string.Equals(item, value, StringComparison.OrdinalIgnoreCase));
+    if (existing is null)
+    {
+      ReplaceComboItems(comboBox, comboBox.Items.Cast<object>()
+        .Select(item => Convert.ToString(item, CultureInfo.CurrentCulture) ?? string.Empty)
+        .Append(value), value);
+      return;
+    }
+
+    comboBox.SelectedItem = existing;
+  }
+
   private void SetPlacementContext(AutomaticPlacementAnalysisResult analysis)
   {
     cachedPlacementContext = analysis;
     ApplySideLayout(analysis.LayoutAnalysis!.Layout!.Kind);
+    SetCaseChoices(analysis.LayoutSignals, analysis.CaseLabel);
     SetPlacementContext(analysis.WorksheetName, analysis.CaseLabel, analysis.ResolvedSide, overridden: false);
   }
 
@@ -629,9 +815,11 @@ public sealed class MainForm : Form
     var version = Interlocked.Increment(ref placementContextRequestVersion);
     var sheet = worksheetNameBox.Text.Trim();
     var label = RequestedCaseLabel;
-    var captured = await StaTask.Run(() => new ExcelSheetSnapshotService().Capture(workbook, sheet));
+    var captured = await StaTask.Run(() => new ExcelSheetSnapshotService().CaptureForNavigation(workbook, sheet, includeShapes: false));
     if (!CanUpdateUi || version != Volatile.Read(ref placementContextRequestVersion)) return;
     if (captured.Snapshot is not { } snapshot) { SetStatus(captured.Message); return; }
+    SetCaseChoices(snapshot.LayoutSignals, label);
+    label = RequestedCaseLabel;
     var row = string.IsNullOrWhiteSpace(label) ? snapshot.ActiveCell.Row :
       ExcelAutomaticPlacementService.ConfirmedAnchors(snapshot.LayoutSignals)
         .FirstOrDefault(anchor => ExcelAutomaticPlacementService.FormatCaseLabel(anchor) == CaseAnchorNormalizer.NormalizeCaseLabel(label))?.Row ?? 0;
@@ -639,7 +827,15 @@ public sealed class MainForm : Form
     if (layout.Layout is { } resolved)
     {
       ApplySideLayout(resolved.Kind);
-      SetStatus($"{sheet} / CASE {label} / {SelectedSide}  構成: {(resolved.Kind == SideLayoutKind.NewOnly ? "Newのみ" : "New/Old")}");
+      var focusCell = new CellReference(row + 1, resolved.RegionFor(SelectedSide).FirstColumn + 1);
+      var focus = await StaTask.Run(() => new ExcelPlacementFocusService().FocusPlacedImage(workbook, sheet, focusCell));
+      SetStatus(focus.Succeeded
+        ? $"{sheet} / CASE {label} / {SelectedSide}  構成: {(resolved.Kind == SideLayoutKind.NewOnly ? "Newのみ" : "New/Old")}"
+        : $"配置先は解析済みですが、Excelへ移動できませんでした: {focus.Message}");
+      if (focus.Succeeded)
+      {
+        BringWorkbookToForeground(workbook, $"{sheet} / CASE {label} / {SelectedSide} へ移動しました。");
+      }
     }
     else SetStatus(string.Join(" ", layout.Reasons));
   }
@@ -653,8 +849,8 @@ public sealed class MainForm : Form
     updatingPlacementContext = true;
     try
     {
-      worksheetNameBox.Text = worksheetName;
-      caseLabelBox.Text = caseLabel;
+      SetComboSelection(worksheetNameBox, worksheetName);
+      SetComboSelection(caseLabelBox, caseLabel);
       oldSideButton.Checked = side is EvidenceSide.Old;
       newSideButton.Checked = side is EvidenceSide.New;
       placementTargetOverridden = overridden;
@@ -671,6 +867,17 @@ public sealed class MainForm : Form
     {
       placementTargetOverridden = true;
     }
+  }
+
+  private async Task FocusSelectedSideAsync(RadioButton sideButton)
+  {
+    if (updatingPlacementContext || !sideButton.Checked)
+    {
+      return;
+    }
+
+    MarkPlacementTargetOverridden();
+    await RefreshManualSideLayoutAsync();
   }
 
   private void SessionMonitorSelectionChanged(object? sender, ExcelSelectionChangedEventArgs eventArgs)
@@ -736,6 +943,7 @@ public sealed class MainForm : Form
             ? EvidenceSide.New
             : SelectedSide;
     var label = ExcelAutomaticPlacementService.FormatCaseLabel(anchor);
+    SetCaseChoices(signals, label);
     SetPlacementContext(selection.WorksheetName, label, side, overridden: false);
     return true;
   }
@@ -824,6 +1032,9 @@ public sealed class MainForm : Form
       if (previousId is not null && previousItem is null)
       {
         workbookSelector.SelectedIndex = -1;
+        worksheetChoicesWorkbookId = null;
+        ReplaceComboItems(worksheetNameBox, [], preferred: null);
+        ReplaceComboItems(caseLabelBox, [], preferred: null);
       }
 
       statusLabel.Text = result.Workbooks.Count == 0
@@ -848,7 +1059,9 @@ public sealed class MainForm : Form
         itemCount: result.Workbooks.Count);
       if (previousItem is not null)
       {
+        worksheetChoicesWorkbookId = null;
         await RefreshPlacementContextAsync(force: true);
+        BringWorkbookToForeground(previousItem, "更新が完了しました。");
       }
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -1160,6 +1373,13 @@ public sealed class MainForm : Form
       if (analysis.Succeeded)
       {
         SetPlacementContext(analysis);
+        if (analysis.Steps.Count > 0)
+        {
+          var focus = await StaTask.Run(() => new ExcelPlacementFocusService().FocusPlacedImage(
+            workbook!, analysis.WorksheetName, analysis.Steps[0].Plan.FocusCell));
+          if (!focus.Succeeded)
+            SetStatus($"配置先は解析済みですが、Excelへ移動できませんでした: {focus.Message}");
+        }
       }
 
       using var preview = new PreviewDialog(
@@ -1518,6 +1738,10 @@ public sealed class MainForm : Form
         SelectedSide,
         sameCaseThenNext: settings.AdvanceMode is PlacementAdvanceMode.SameCaseThenNext));
       SetStatus(result.Message);
+      if (!string.IsNullOrWhiteSpace(result.WorksheetName) && result.Target.Row > 0)
+      {
+        BringWorkbookToForeground(workbook, result.Message);
+      }
       ApplyNavigationResult(result);
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -1545,6 +1769,10 @@ public sealed class MainForm : Form
       side,
       settings.AdvanceMode is PlacementAdvanceMode.SameCaseThenNext));
     SetStatus(result.Message);
+    if (!string.IsNullOrWhiteSpace(result.WorksheetName) && result.Target.Row > 0)
+    {
+      BringWorkbookToForeground(workbook, result.Message);
+    }
     if (result.Succeeded)
     {
       ApplyNavigationResult(result);
@@ -1563,8 +1791,9 @@ public sealed class MainForm : Form
     updatingPlacementContext = true;
     try
     {
-      worksheetNameBox.Text = result.WorksheetName;
-      caseLabelBox.Text = result.CaseLabel;
+      SetComboSelection(worksheetNameBox, result.WorksheetName);
+      SetCaseChoices(result.LayoutSignals, result.CaseLabel);
+      SetComboSelection(caseLabelBox, result.CaseLabel);
       newSideButton.Checked = result.Side is EvidenceSide.New;
       oldSideButton.Checked = result.Side is EvidenceSide.Old;
       placementTargetOverridden = true;
@@ -2002,7 +2231,7 @@ public sealed class MainForm : Form
           {
           }
         }
-      }));
+      }), workbook);
   }
 
   private void AddAutomaticPlacementHistory(
@@ -2193,7 +2422,7 @@ public sealed class MainForm : Form
       cleanupSnapshot is null ? null : cleanupSnapshot.Dispose);
     if (referenceResize is null)
     {
-      AddHistory(placementEntry);
+      AddHistory(placementEntry, workbook);
       return;
     }
     AddHistory(placementEntry with
@@ -2221,7 +2450,7 @@ public sealed class MainForm : Form
         if (!restored.Succeeded) SetStatus(restored.Message);
         return false;
       },
-    });
+    }, workbook);
   }
 
   private void AddManagedReplacementHistory(
@@ -2338,7 +2567,7 @@ public sealed class MainForm : Form
         SetStatus(result.Message);
         return result.Succeeded;
       },
-      cleanupSnapshot is null ? null : cleanupSnapshot.Dispose));
+      cleanupSnapshot is null ? null : cleanupSnapshot.Dispose), workbook);
   }
 
   private void AddManagedDeletionHistory(
@@ -2408,7 +2637,7 @@ public sealed class MainForm : Form
         }
         return true;
       },
-      cleanupSnapshot is null ? null : cleanupSnapshot.Dispose));
+      cleanupSnapshot is null ? null : cleanupSnapshot.Dispose), workbook);
   }
 
   private async Task<ManagedShapeMutationResult> ReplaceManagedFromBytesAsync(
@@ -2451,7 +2680,7 @@ public sealed class MainForm : Form
       () => RunRowHistoryOperationAsync(() => rowMutationService.InsertRows(
         workbook,
         worksheetName,
-        new RowInsertion(startRow, count, "Redo EvidenceCrafter row insertion.")))));
+        new RowInsertion(startRow, count, "Redo EvidenceCrafter row insertion.")))), workbook);
 
   private void AddRowDeletionHistory(
     WorkbookIdentity workbook,
@@ -2475,7 +2704,7 @@ public sealed class MainForm : Form
         "行削除",
         () => RunRowHistoryOperationAsync(() => rowMutationService.RestoreDeletedRows(workbook, snapshot)),
         () => RunRowHistoryOperationAsync(() => rowMutationService.DeleteRestoredRows(workbook, snapshot)),
-        snapshot.Dispose));
+        snapshot.Dispose), workbook);
 
   private async Task<bool> RunRowHistoryOperationAsync(Func<RowMutationResult> operation)
   {
@@ -2484,8 +2713,9 @@ public sealed class MainForm : Form
     return result.Succeeded && result.Changed;
   }
 
-  private void AddHistory(HistoryEntry entry)
+  private void AddHistory(HistoryEntry entry, WorkbookIdentity workbook)
   {
+    entry = entry with { Workbook = workbook };
     if (undoHistory.Count >= 20)
     {
       var discarded = undoHistory.Last();
@@ -2524,6 +2754,7 @@ public sealed class MainForm : Form
       {
         _ = undoHistory.Pop();
         redoHistory.Push(entry);
+        BringHistoryWorkbookToForeground(entry, "Undo");
       }
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -2558,6 +2789,7 @@ public sealed class MainForm : Form
       {
         _ = redoHistory.Pop();
         undoHistory.Push(entry);
+        BringHistoryWorkbookToForeground(entry, "Redo");
       }
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -2666,6 +2898,61 @@ public sealed class MainForm : Form
     SetStatus($"{reason} 再試行します ({clipboardRetryAttempt}/{ClipboardRetryLimit})。");
   }
 
+  private void BringHistoryWorkbookToForeground(HistoryEntry entry, string operation)
+  {
+    if (entry.Workbook is { } workbook)
+    {
+      BringWorkbookToForeground(workbook, $"{operation}が完了しました。");
+    }
+  }
+
+  private void BringWorkbookToForeground(WorkbookIdentity workbook, string completedMessage)
+  {
+    if (!ExcelPlacementFocusService.BringToForeground(workbook))
+    {
+      SetStatus($"{completedMessage}対象ブックを前面に表示できませんでした。");
+    }
+  }
+
+  private void SelectThemeColor()
+  {
+    using var dialog = new ColorDialog
+    {
+      Color = settings.EffectiveThemeColor,
+      FullOpen = true,
+      AnyColor = true,
+    };
+    if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+    UiTheme.SetThemeColor(dialog.Color);
+    settings = settings with { ThemeColorArgb = dialog.Color.ToArgb() };
+    RefreshThemeUi();
+  }
+
+  private void RefreshThemeUi()
+  {
+    UiTheme.Refresh(this);
+    opacitySlider.BackColor = UiTheme.Canvas;
+    opacitySlider.Invalidate();
+    themeSlider.BackColor = UiTheme.Canvas;
+    themeSlider.Invalidate();
+    UpdateSideButtonColors();
+    QueueSettingsSave();
+  }
+
+  private void QueueSettingsSave()
+  {
+    themeSaveTimer.Stop();
+    themeSaveTimer.Start();
+  }
+
+  private void SaveThemeSettings()
+  {
+    try { settingsStore.Save(settings); }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+    { SetStatus($"テーマ設定を保存できません: {exception.Message}"); }
+  }
+
   private void SetStatus(string message)
   {
     if (CanUpdateUi)
@@ -2700,7 +2987,10 @@ public sealed class MainForm : Form
     string Label,
     Func<Task<bool>> Undo,
     Func<Task<bool>> Redo,
-    Action? Cleanup = null);
+    Action? Cleanup = null)
+  {
+    internal WorkbookIdentity? Workbook { get; init; }
+  }
 
   private sealed record HistoryImage(byte[] Png, ImageDimensions Dimensions);
 

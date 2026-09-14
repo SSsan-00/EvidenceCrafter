@@ -32,6 +32,7 @@ internal sealed class ImageEditorDialog : Form
       Dock = DockStyle.Top,
       Padding = new Padding(6, 3, 6, 3),
       BackColor = UiTheme.SurfaceMuted,
+      ForeColor = UiTheme.TextOn(UiTheme.SurfaceMuted),
     };
 
     var rectangleButton = AddToolButton(toolStrip, "枠", ImageEditorTool.Rectangle);

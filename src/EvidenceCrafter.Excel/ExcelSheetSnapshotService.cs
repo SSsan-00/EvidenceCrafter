@@ -22,20 +22,22 @@ public sealed class ExcelSheetSnapshotService
     string worksheetName,
     int? scopeRow = null,
     bool includeWorksheetNames = false) =>
-    CaptureCore(workbook, worksheetName, scopeRow, includeWorksheetNames, navigationOnly: false);
+    CaptureCore(workbook, worksheetName, scopeRow, includeWorksheetNames, navigationOnly: false, includeShapes: true);
 
-  internal SheetSnapshotResult CaptureForNavigation(
+  public SheetSnapshotResult CaptureForNavigation(
     WorkbookIdentity workbook,
     string worksheetName,
-    bool includeWorksheetNames = false) =>
-    CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true);
+    bool includeWorksheetNames = false,
+    bool includeShapes = true) =>
+    CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true, includeShapes);
 
   private static SheetSnapshotResult CaptureCore(
     WorkbookIdentity workbook,
     string worksheetName,
     int? scopeRow,
     bool includeWorksheetNames,
-    bool navigationOnly)
+    bool navigationOnly,
+    bool includeShapes)
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
@@ -106,7 +108,8 @@ public sealed class ExcelSheetSnapshotService
                   worksheetName,
                   scopeRow,
                   includeWorksheetNames,
-                  navigationOnly) ??
+                  navigationOnly,
+                  includeShapes) ??
                 SheetSnapshotResult.Failed(worksheetName, "The selected Workbook could not be matched.");
           }
           catch (Exception exception) when (IsAutomationFailure(exception))
@@ -148,7 +151,8 @@ public sealed class ExcelSheetSnapshotService
     string worksheetName,
     int? scopeRow,
     bool includeWorksheetNames,
-    bool navigationOnly)
+    bool navigationOnly,
+    bool includeShapes)
   {
     if (TryGetProperty(runningObject, "Workbooks", out var workbooks))
     {
@@ -175,7 +179,8 @@ public sealed class ExcelSheetSnapshotService
                 worksheetName,
                 scopeRow,
                 includeWorksheetNames,
-                navigationOnly);
+                navigationOnly,
+                includeShapes);
             }
           }
           finally
@@ -207,7 +212,8 @@ public sealed class ExcelSheetSnapshotService
             worksheetName,
             scopeRow,
             includeWorksheetNames,
-            navigationOnly)
+            navigationOnly,
+            includeShapes)
         : null;
     }
     finally
@@ -223,7 +229,8 @@ public sealed class ExcelSheetSnapshotService
     string worksheetName,
     int? scopeRow,
     bool includeWorksheetNames,
-    bool navigationOnly)
+    bool navigationOnly,
+    bool includeShapes)
   {
     if (!WorkbookWindowMatchesIdentity(workbook, identity))
     {
@@ -245,6 +252,8 @@ public sealed class ExcelSheetSnapshotService
     {
       captureStage = "resolving the target worksheet";
       worksheet = ResolveWorksheet(application, workbook, worksheetName, out var resolvedName);
+      captureStage = "activating the target worksheet";
+      ActivateTargetWorksheet(application, workbook, worksheet);
       workbookActiveSheet = GetRequiredProperty(workbook, "ActiveSheet");
       var activeSheetName = Convert.ToString(
         GetRequiredProperty(workbookActiveSheet, "Name"),
@@ -253,7 +262,7 @@ public sealed class ExcelSheetSnapshotService
       {
         return SheetSnapshotResult.Failed(
           resolvedName,
-          "対象SheetをExcelでアクティブにしてから再解析してください。");
+          "対象SheetをExcelでアクティブにできませんでした。Sheetの表示状態を確認してください。");
       }
 
       captureStage = "reading the active cell and used range";
@@ -360,7 +369,9 @@ public sealed class ExcelSheetSnapshotService
           currentCaseLastRow,
           observedLastColumn);
       captureStage = "reading worksheet Shapes";
-      var shapes = ReadShapes(worksheet);
+      // Adjacent CASE navigation depends on structure, not image occupancy.
+      // Placement callers always retain the complete, fresh shape snapshot.
+      var shapes = includeShapes ? ReadShapes(worksheet) : [];
       captureStage = "reading row heights and column widths";
       var rowHeights = navigationOnly
         ? new Dictionary<int, double>()
@@ -656,6 +667,23 @@ public sealed class ExcelSheetSnapshotService
     var result = new Dictionary<int, double>();
     ReadRowHeightBlock(worksheet, firstRow, lastRow, result);
     return result;
+  }
+
+  private static void ActivateTargetWorksheet(object application, object workbook, object worksheet)
+  {
+    var eventsWereEnabled = Convert.ToBoolean(
+      GetRequiredProperty(application, "EnableEvents"),
+      CultureInfo.InvariantCulture);
+    SetProperty(application, "EnableEvents", false);
+    try
+    {
+      InvokeMethod(workbook, "Activate");
+      InvokeMethod(worksheet, "Activate");
+    }
+    finally
+    {
+      SetProperty(application, "EnableEvents", eventsWereEnabled);
+    }
   }
 
   private static void ReadRowHeightBlock(
@@ -1143,6 +1171,15 @@ public sealed class ExcelSheetSnapshotService
       binder: null,
       target,
       arguments,
+      CultureInfo.CurrentCulture);
+
+  private static void SetProperty(object target, string propertyName, object value) =>
+    target.GetType().InvokeMember(
+      propertyName,
+      BindingFlags.SetProperty,
+      binder: null,
+      target,
+      [value],
       CultureInfo.CurrentCulture);
 
   private static object? InvokeMethod(object target, string methodName, params object[] arguments) =>

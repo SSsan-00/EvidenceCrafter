@@ -511,6 +511,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsTrue(previousSheet.Succeeded, previousSheet.Message);
         Assert.AreEqual("FocusTarget", previousSheet.WorksheetName);
         Assert.AreEqual(EvidenceSide.Old, previousSheet.Side);
+        Assert.AreEqual(4, previousSheet.Target.Row);
         SetCellValue(navigationSheet, 3, 1, "");
         SetCellValue(navigationSheet, 3, 2, "");
         var failedNavigation = RunExcelSta(() => new ExcelCaseNavigationService().Navigate(
@@ -518,6 +519,22 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsFalse(failedNavigation.Succeeded);
         StringAssert.Contains(failedNavigation.Message, "次の帳票");
         StringAssert.Contains(failedNavigation.Message, "解析できません");
+
+        _ = InvokeMethod(navigationSheet, "Activate");
+        var selectedSheetSnapshot = RunExcelSta(() =>
+          new ExcelSheetSnapshotService().Capture(identity, "FocusTarget"));
+        Assert.IsTrue(selectedSheetSnapshot.Succeeded, selectedSheetSnapshot.Message);
+        object? selectedSheet = null;
+        try
+        {
+          selectedSheet = GetRequiredProperty(workbook, "ActiveSheet");
+          Assert.AreEqual("FocusTarget", Convert.ToString(
+            GetRequiredProperty(selectedSheet, "Name"), CultureInfo.CurrentCulture));
+        }
+        finally
+        {
+          ReleaseOnce(selectedSheet);
+        }
       }
       finally
       {
@@ -569,11 +586,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsTrue(Convert.ToBoolean(GetRequiredProperty(application, "EnableEvents"), CultureInfo.InvariantCulture));
         restoredWorkbook = GetRequiredProperty(application, "ActiveWorkbook");
         Assert.AreEqual(
-          otherWorkbookPath,
+          workbookPath,
           Convert.ToString(GetRequiredProperty(restoredWorkbook, "FullName"), CultureInfo.CurrentCulture),
           ignoreCase: true,
-          "Snapshot capture must restore the previously active Workbook.");
-        Release(restoredWorkbook);
+          "Snapshot capture must activate the Workbook selected in EvidenceCrafter.");
+        ReleaseOnce(restoredWorkbook);
         restoredWorkbook = null;
 
         _ = InvokeMethod(workbook, "Activate");
@@ -766,6 +783,9 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       activeWorkbook = null;
       _ = NativeMethods.ShowWindow(identity.ExcelWindowHandle, NativeMethods.MinimizeWindowCommand);
       Assert.IsTrue(NativeMethods.IsIconic(identity.ExcelWindowHandle));
+
+      Assert.IsTrue(ExcelPlacementFocusService.BringToForeground(identity));
+      Assert.IsTrue(NativeMethods.IsZoomed(identity.ExcelWindowHandle));
 
       var minimizedFocus = RunExcelSta(() => new ExcelPlacementFocusService().FocusPlacedImage(
         identity,
@@ -1499,6 +1519,10 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsIconic(nint windowHandle);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool IsZoomed(nint windowHandle);
 
     [DllImport("user32.dll")]
     internal static extern uint GetWindowThreadProcessId(nint windowHandle, out uint processId);
