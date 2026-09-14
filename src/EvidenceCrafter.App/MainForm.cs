@@ -1562,20 +1562,23 @@ public sealed class MainForm : Form
         DiagnosticOutcome.Succeeded,
         checked((int)workbook.ProcessId),
         result.PlacedImages.Count);
-      await AdvanceAfterPlacementAsync(
+      var advanced = await AdvanceAfterPlacementAsync(
         workbook,
         result.PlacedImages[^1].WorksheetName,
         result.Analysis?.CaseLabel ?? caseLabelBox.Text,
         side);
-      var placedImage = result.PlacedImages[^1];
-      var focus = await StaTask.Run(() => new ExcelPlacementFocusService().FocusPlacedImage(
-        workbook, placedImage.WorksheetName, placedImage.FocusCell));
-      if (focus.Succeeded)
+      if (!advanced)
       {
-        if (!ExcelPlacementFocusService.BringToForeground(workbook))
-          SetStatus("画像は配置済みです。対象Excelを前面に表示できませんでした。");
+        var placedImage = result.PlacedImages[^1];
+        var focus = await StaTask.Run(() => new ExcelPlacementFocusService().FocusPlacedImage(
+          workbook, placedImage.WorksheetName, placedImage.FocusCell));
+        if (focus.Succeeded)
+        {
+          if (!ExcelPlacementFocusService.BringToForeground(workbook))
+            SetStatus("画像は配置済みです。対象Excelを前面に表示できませんでした。");
+        }
+        else SetStatus($"画像は配置済みです。{focus.Message}");
       }
-      else SetStatus($"画像は配置済みです。{focus.Message}");
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
     {
@@ -1765,7 +1768,7 @@ public sealed class MainForm : Form
     }
   }
 
-  private async Task AdvanceAfterPlacementAsync(
+  private async Task<bool> AdvanceAfterPlacementAsync(
     WorkbookIdentity workbook,
     string worksheetName,
     string caseLabel,
@@ -1784,10 +1787,9 @@ public sealed class MainForm : Form
     {
       BringWorkbookToForeground(workbook, result.Message);
     }
-    if (result.Succeeded)
-    {
-      ApplyNavigationResult(result);
-    }
+    if (!result.Succeeded) return false;
+    ApplyNavigationResult(result);
+    return true;
   }
 
   private void ApplyNavigationResult(CaseNavigationResult result)

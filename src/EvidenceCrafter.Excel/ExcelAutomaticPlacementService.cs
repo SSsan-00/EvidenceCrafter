@@ -241,9 +241,22 @@ public sealed class ExcelAutomaticPlacementService
 
     if (!AnalysisMatchesRequest(initialAnalysis, worksheetName, images) || !SnapshotStillMatches(workbook, initialAnalysis))
     {
-      return AutomaticPlacementResult.Failed(
-        "プレビュー後にWorksheetが変更されました。再度キャプチャを確認してください。",
-        initialAnalysis);
+      // The user may edit Excel while the preview is open. Refresh the plan against
+      // the current worksheet instead of rejecting an otherwise valid placement.
+      var refreshed = Analyze(
+        workbook,
+        worksheetName,
+        side,
+        images,
+        preferActiveGap,
+        horizontalMarginPoints,
+        requestedCaseLabel ?? initialAnalysis.CaseLabel);
+      if (!refreshed.Succeeded)
+      {
+        return AutomaticPlacementResult.Failed(refreshed.Message, refreshed);
+      }
+
+      initialAnalysis = refreshed;
     }
 
     var appliedRows = new List<AppliedRowInsertion>();
