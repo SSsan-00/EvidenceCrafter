@@ -268,7 +268,7 @@ public sealed class MainForm : Form
     opacitySlider.Width = 118;
     opacitySlider.Height = 28;
     opacitySlider.BackColor = UiTheme.Canvas;
-    opacitySlider.Margin = new Padding(6, 0, 6, 0);
+    opacitySlider.Margin = Padding.Empty;
     opacitySlider.ValueChanged += (_, _) =>
     {
       Opacity = opacitySlider.Value / 100d;
@@ -284,7 +284,7 @@ public sealed class MainForm : Form
     themeSlider.Height = 28;
     themeSlider.BackColor = UiTheme.Canvas;
     // Keep equal bar-to-icon spacing; the icon margins above provide the inter-bar gap.
-    themeSlider.Margin = new Padding(6, 0, 6, 0);
+    themeSlider.Margin = Padding.Empty;
     themeSlider.ValueChanged += (_, _) =>
     {
       UiTheme.SetThemeIntensity(themeSlider.Value);
