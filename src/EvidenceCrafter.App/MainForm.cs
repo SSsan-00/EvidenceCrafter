@@ -281,7 +281,8 @@ public sealed class MainForm : Form
     themeSlider.Width = 142;
     themeSlider.Height = 28;
     themeSlider.BackColor = UiTheme.Canvas;
-    themeSlider.Margin = new Padding(6, 0, 6, 0);
+    // Keep the opacity and theme controls visually distinct in the compact header.
+    themeSlider.Margin = new Padding(14, 0, 6, 0);
     themeSlider.ValueChanged += (_, _) =>
     {
       UiTheme.SetThemeIntensity(themeSlider.Value);
