@@ -1516,7 +1516,7 @@ public sealed class MainForm : Form
         direction,
         caseLabelBox.Text,
         SelectedSide,
-        sameCaseThenNext: false));
+        sameCaseThenNext: settings.AdvanceMode is PlacementAdvanceMode.SameCaseThenNext));
       SetStatus(result.Message);
       ApplyNavigationResult(result);
     }
