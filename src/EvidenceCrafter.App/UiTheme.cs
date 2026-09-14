@@ -98,7 +98,8 @@ internal static class UiTheme
     button.AutoSizeMode = AutoSizeMode.GrowAndShrink;
     button.Font = font;
     button.MinimumSize = new Size(64, 32);
-    button.FlatStyle = FlatStyle.Standard;
+    button.FlatStyle = FlatStyle.Flat;
+    button.FlatAppearance.BorderSize = 1;
     button.UseVisualStyleBackColor = false;
     button.Margin = new Padding(3, 0, 3, 0);
     button.Padding = new Padding(12, 2, 12, 2);
@@ -171,8 +172,8 @@ internal static class UiTheme
       case Role.Canvas: control.BackColor = Canvas; control.ForeColor = Text; break;
       case Role.Surface: control.BackColor = Surface; control.ForeColor = TextOn(Surface); break;
       case Role.MutedSurface: control.BackColor = SurfaceMuted; control.ForeColor = TextOn(SurfaceMuted); break;
-      case Role.Text: control.ForeColor = TextOn(control.BackColor); break;
-      case Role.MutedText: control.ForeColor = MutedTextOn(control.BackColor); break;
+      case Role.Text: control.ForeColor = TextColorFor(control); break;
+      case Role.MutedText: control.ForeColor = MutedTextColorFor(control); break;
       case Role.Border: control.BackColor = Border; break;
       case Role.Button: ApplyButton((Button)control, false); break;
       case Role.PrimaryButton: ApplyButton((Button)control, true); break;
@@ -191,7 +192,16 @@ internal static class UiTheme
   {
     button.BackColor = primary ? Primary : SurfaceMuted;
     button.ForeColor = TextOn(button.BackColor);
+    button.FlatAppearance.BorderColor = primary ? PrimaryHover : Border;
+    button.FlatAppearance.MouseOverBackColor = primary ? PrimaryHover : Surface;
+    button.FlatAppearance.MouseDownBackColor = primary ? Primary : SurfaceMuted;
   }
+
+  private static Color TextColorFor(Control control) =>
+    TextOn(control.Parent?.BackColor ?? Canvas);
+
+  private static Color MutedTextColorFor(Control control) =>
+    MutedTextOn(control.Parent?.BackColor ?? SurfaceMuted);
 
   private static void ApplyThemeColorButton(ThemeColorPickerButton button)
   {
