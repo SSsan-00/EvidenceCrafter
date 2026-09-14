@@ -10,7 +10,7 @@ internal sealed class ImageEditorDialog : Form
   private readonly ToolStripButton undoButton;
   private readonly ToolStripButton redoButton;
   private readonly ToolStripButton resetButton;
-  private readonly ToolStripButton colorButton;
+  private readonly ThemeColorPickerButton colorButton;
   private readonly ToolStripStatusLabel statusLabel;
   private bool confirmed;
 
@@ -43,13 +43,22 @@ internal sealed class ImageEditorDialog : Form
     rectangleButton.Checked = true;
     toolStrip.Items.Add(new ToolStripSeparator());
 
-    colorButton = new ToolStripButton("色")
+    colorButton = new ThemeColorPickerButton
     {
+      AccessibleName = "注釈の色を選択",
       BackColor = Color.Red,
+    };
+    UiTheme.StyleThemeColorButton(colorButton, Font);
+    colorButton.BackColor = Color.Red;
+    colorButton.Click += (_, _) => SelectAnnotationColor();
+    var colorHost = new ToolStripControlHost(colorButton)
+    {
+      AutoSize = false,
+      Size = new Size(34, 34),
+      Padding = new Padding(3),
       ToolTipText = "枠・矢印・テキストラベルの色を選択します",
     };
-    colorButton.Click += (_, _) => SelectAnnotationColor();
-    toolStrip.Items.Add(colorButton);
+    toolStrip.Items.Add(colorHost);
     toolStrip.Items.Add(new ToolStripSeparator());
 
     undoButton = new ToolStripButton("元に戻す")
