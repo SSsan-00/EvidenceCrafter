@@ -112,7 +112,7 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
     var imageEndRow = (int)imageEndValue;
     var insertions = new List<RowInsertion>();
 
-    if (mode is PlacementMode.Gap)
+    if (request.PreferredStartRow is not null || mode is PlacementMode.Gap)
     {
       var followingContents = relevantContents
         .Where(content => content.StartRow > startRow)
@@ -121,6 +121,8 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
 
       if (insertion is not null)
       {
+        if (request.PreferredStartRow is not null)
+          throw new InvalidOperationException("対応する反対Side画像と同じ開始行では画像全体と必要な余白を確保できません。既存コンテンツを確認してください。");
         insertions.Add(insertion);
       }
     }

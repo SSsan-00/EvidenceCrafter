@@ -110,6 +110,26 @@ public sealed class PlacementPlannerTests
   }
 
   [TestMethod]
+  public void Plan_PairedImage_RejectsContentBelowFreeStartRow()
+  {
+    var request = CreateRequest([new ContentSpan(EvidenceSide.New, 6, 6, ContentKind.Cell)]) with
+    {
+      PreferredStartRow = 5,
+    };
+    Assert.ThrowsExactly<InvalidOperationException>(() => planner.Plan(request));
+  }
+
+  [TestMethod]
+  public void Plan_PairedImage_RejectsFollowingImageInsideRequiredGap()
+  {
+    var request = CreateRequest([new ContentSpan(EvidenceSide.New, 9, 12, ContentKind.Shape)]) with
+    {
+      PreferredStartRow = 5,
+    };
+    Assert.ThrowsExactly<InvalidOperationException>(() => planner.Plan(request));
+  }
+
+  [TestMethod]
   public void Plan_CaptionInsideReservedBand_DoesNotAddAnotherGap()
   {
     ContentSpan[] contents =

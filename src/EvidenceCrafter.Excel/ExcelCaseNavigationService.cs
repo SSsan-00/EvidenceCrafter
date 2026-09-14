@@ -78,9 +78,7 @@ public sealed class ExcelCaseNavigationService
   {
     if (!current.WorksheetNames.Contains(current.WorksheetName, StringComparer.OrdinalIgnoreCase))
       return CaseNavigationResult.Failed("対象ブックのシート一覧を確認できません。更新して再度移動してください。");
-    var candidates = AdjacentWorksheetNames(current.WorksheetNames, current.WorksheetName, direction)
-      .Take(1)
-      .ToArray();
+    var candidates = AdjacentWorksheetNames(current.WorksheetNames, current.WorksheetName, direction);
     var failures = new List<string>();
     foreach (var candidate in candidates)
     {
@@ -133,7 +131,9 @@ public sealed class ExcelCaseNavigationService
       {
         var edgeCase = ExcelAutomaticPlacementService.FormatCaseLabel(edgeBlock.Anchor);
         return new CaseNavigationResult(false, current.WorksheetName, edgeCase, edgeBlock.Side, edgeCell,
-          $"これ以上{(direction == CaseNavigationDirection.Next ? "次" : "前")}のCASEはありません。{edgeCase} の端にフォーカスしました。")
+          failures.Count > 0
+            ? $"隣接シートへ移動できません。{string.Join(" / ", failures)}"
+            : $"これ以上{(direction == CaseNavigationDirection.Next ? "次" : "前")}のCASEはありません。{edgeCase} の端にフォーカスしました。")
           { LayoutSignals = current.LayoutSignals, LayoutKind = edgeBlock.Layout.Kind };
       }
       failures.Add($"CASEの端へのフォーカス: {edgeFocused.Message}");
@@ -185,9 +185,6 @@ public sealed class ExcelCaseNavigationService
     index = Array.FindLastIndex(blocks.ToArray(), block => block.Anchor.Row <= snapshot.ActiveCell.Row && block.Side == currentSide);
     return index >= 0 ? index : 0;
   }
-
-  private static bool IsOccupied(SheetSnapshot snapshot, Block block)
-    => IsOccupied(snapshot, block.Layout, block.Side);
 
   internal static bool IsOccupied(
     SheetSnapshot snapshot,

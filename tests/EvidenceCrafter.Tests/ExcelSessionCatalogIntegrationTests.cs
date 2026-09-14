@@ -38,7 +38,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void CaseNavigation_InReferenceCopies_CrossesSheetsBothWays() =>
     RunSupervisedScenario(Scenario.ReferenceNavigation);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation }
+  [TestMethod]
+  public void PairedImages_AlignAfterRowGrowthAndRestoreReference() =>
+    RunSupervisedScenario(Scenario.PairAlignment);
+
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment }
 
   private static void RunSupervisedScenario(Scenario scenario)
   {
@@ -177,6 +181,12 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       if (scenario is Scenario.ReferenceAppend or Scenario.ReferenceNavigation)
       {
         VerifyReferenceAppend(workbooks, temporaryDirectory, placementImagePath, scenario == Scenario.ReferenceNavigation);
+      }
+      else if (scenario == Scenario.PairAlignment)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifyPairedImageAlignment(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.SnapshotReads)
       {
@@ -501,6 +511,13 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsTrue(previousSheet.Succeeded, previousSheet.Message);
         Assert.AreEqual("FocusTarget", previousSheet.WorksheetName);
         Assert.AreEqual(EvidenceSide.Old, previousSheet.Side);
+        SetCellValue(navigationSheet, 3, 1, "");
+        SetCellValue(navigationSheet, 3, 2, "");
+        var failedNavigation = RunExcelSta(() => new ExcelCaseNavigationService().Navigate(
+          identity, "FocusTarget", CaseNavigationDirection.Next, "1-1", EvidenceSide.Old));
+        Assert.IsFalse(failedNavigation.Succeeded);
+        StringAssert.Contains(failedNavigation.Message, "次の帳票");
+        StringAssert.Contains(failedNavigation.Message, "解析できません");
       }
       finally
       {
