@@ -2924,6 +2924,20 @@ public sealed class MainForm : Form
     if (!ExcelPlacementFocusService.BringToForeground(workbook))
     {
       SetStatus($"{completedMessage}対象ブックを前面に表示できませんでした。");
+      return;
+    }
+
+    // Keep the tool visible without stealing Excel's keyboard focus.
+    if (IsHandleCreated && !IsDisposed && !Disposing)
+    {
+      SetWindowPos(
+        Handle,
+        settings.AlwaysOnTop ? new nint(-1) : nint.Zero,
+        0,
+        0,
+        0,
+        0,
+        0x0013); // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE
     }
   }
 
