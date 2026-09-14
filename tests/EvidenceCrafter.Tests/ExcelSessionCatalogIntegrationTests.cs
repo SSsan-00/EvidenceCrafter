@@ -34,7 +34,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void AppendImages_InReferenceCopies_DoNotOverlap() =>
     RunSupervisedScenario(Scenario.ReferenceAppend);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend }
+  [TestMethod]
+  public void CaseNavigation_InReferenceCopies_CrossesSheetsBothWays() =>
+    RunSupervisedScenario(Scenario.ReferenceNavigation);
+
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation }
 
   private static void RunSupervisedScenario(Scenario scenario)
   {
@@ -170,9 +174,9 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       SetProperty(otherWorksheet, "Name", "OtherTarget");
       _ = InvokeMethod(otherWorkbook, "SaveAs", otherWorkbookPath);
 
-      if (scenario == Scenario.ReferenceAppend)
+      if (scenario is Scenario.ReferenceAppend or Scenario.ReferenceNavigation)
       {
-        VerifyReferenceAppend(workbooks, temporaryDirectory, placementImagePath);
+        VerifyReferenceAppend(workbooks, temporaryDirectory, placementImagePath, scenario == Scenario.ReferenceNavigation);
       }
       else if (scenario == Scenario.SnapshotReads)
       {
@@ -479,6 +483,30 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       SetRangeBorder(worksheet, 3, 1, 3, 8, 8);
       SetRangeBorder(worksheet, 1, 5, 8, 5, 10);
       SetRangeBorder(worksheet, 8, 1, 8, 8, 9);
+      // Arbitrary sheet names must navigate in tab order, in both directions.
+      object? navigationSheet = null;
+      try
+      {
+        _ = InvokeMethod(worksheet, "Copy", Type.Missing, worksheet);
+        navigationSheet = GetRequiredProperty(workbook, "ActiveSheet");
+        SetProperty(navigationSheet, "Name", "次の帳票");
+        _ = InvokeMethod(worksheet, "Activate");
+        var nextSheet = RunExcelSta(() => new ExcelCaseNavigationService().Navigate(
+          identity, "FocusTarget", CaseNavigationDirection.Next, "1-1", EvidenceSide.Old));
+        Assert.IsTrue(nextSheet.Succeeded, nextSheet.Message);
+        Assert.AreEqual("次の帳票", nextSheet.WorksheetName);
+        Assert.AreEqual(EvidenceSide.New, nextSheet.Side);
+        var previousSheet = RunExcelSta(() => new ExcelCaseNavigationService().Navigate(
+          identity, "次の帳票", CaseNavigationDirection.Previous, "1-1", EvidenceSide.New));
+        Assert.IsTrue(previousSheet.Succeeded, previousSheet.Message);
+        Assert.AreEqual("FocusTarget", previousSheet.WorksheetName);
+        Assert.AreEqual(EvidenceSide.Old, previousSheet.Side);
+      }
+      finally
+      {
+        if (navigationSheet is not null) _ = InvokeMethod(navigationSheet, "Delete");
+        Release(navigationSheet);
+      }
       object? automaticTargetCell = null;
       object? originalOtherCell = null;
       object? restoredWorkbook = null;

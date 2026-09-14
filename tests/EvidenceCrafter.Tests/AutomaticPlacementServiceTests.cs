@@ -468,6 +468,18 @@ public sealed class AutomaticPlacementServiceTests
     Assert.AreEqual(103, next);
   }
 
+  [TestMethod]
+  public void CaseNavigation_CrossesSheetsInTabOrderWithoutWrapping()
+  {
+    string[] names = ["表紙", "B10", "帳票", "B2"];
+    CollectionAssert.AreEqual(new[] { "帳票" },
+      ExcelCaseNavigationService.AdjacentWorksheetNames(names, "B10", CaseNavigationDirection.Next).ToArray());
+    CollectionAssert.AreEqual(new[] { "B10" },
+      ExcelCaseNavigationService.AdjacentWorksheetNames(names, "帳票", CaseNavigationDirection.Previous).ToArray());
+    Assert.HasCount(0, ExcelCaseNavigationService.AdjacentWorksheetNames(names, "B2", CaseNavigationDirection.Next));
+    Assert.HasCount(0, ExcelCaseNavigationService.AdjacentWorksheetNames(names, "表紙", CaseNavigationDirection.Previous));
+  }
+
   private static SheetSnapshot Snapshot(SheetLayoutSignals signals) =>
     new(
       "Evidence",

@@ -8,7 +8,7 @@ namespace EvidenceCrafter.Tests;
 
 public sealed partial class ExcelSessionCatalogIntegrationTests
 {
-  private static void VerifyReferenceAppend(object workbooks, string directory, string imagePath)
+  private static void VerifyReferenceAppend(object workbooks, string directory, string imagePath, bool navigationOnly = false)
   {
     const string referenceDirectory = @"C:\work\Macro\Case&Evidence\refer";
     if (!Directory.Exists(referenceDirectory)) throw new OfficeUnavailableException("Reference workbooks are unavailable.");
@@ -37,6 +37,19 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         var discovery = new ExcelSessionCatalog().Discover();
         var identity = discovery.Workbooks.SingleOrDefault(item => string.Equals(item.FullPath, copy, StringComparison.OrdinalIgnoreCase));
         Assert.IsNotNull(identity, $"Open={GetRequiredProperty(workbook, "FullName")}; found={string.Join(";", discovery.Workbooks.Select(item => item.FullPath))}; warnings={string.Join(";", discovery.Warnings)}");
+        var navigationSnapshot = new ExcelSheetSnapshotService().CaptureForNavigation(identity, "B1");
+        Assert.IsTrue(navigationSnapshot.Succeeded, navigationSnapshot.Message);
+        var lastCase = ExcelAutomaticPlacementService.FormatCaseLabel(
+          ExcelAutomaticPlacementService.ConfirmedAnchors(navigationSnapshot.Snapshot!.LayoutSignals).Last());
+        var navigator = new ExcelCaseNavigationService();
+        var next = navigator.Navigate(identity, "B1", CaseNavigationDirection.Next, lastCase, EvidenceSide.Old);
+        Assert.IsTrue(next.Succeeded, $"{Path.GetFileName(source)}: {next.Message}");
+        Assert.AreEqual("B2", next.WorksheetName);
+        var previous = navigator.Navigate(identity, "B2", CaseNavigationDirection.Previous, next.CaseLabel, EvidenceSide.New);
+        Assert.IsTrue(previous.Succeeded, $"{Path.GetFileName(source)}: {previous.Message}");
+        Assert.AreEqual("B1", previous.WorksheetName);
+        Console.WriteLine($"NAVIGATION verified: {Path.GetFileName(source)}, B1 -> B2 -> B1.");
+        if (navigationOnly) continue;
         var service = new ExcelAutomaticPlacementService();
         var request = new[] { new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 80)) };
         shapes = GetRequiredProperty(sheet, "Shapes");

@@ -1516,7 +1516,7 @@ public sealed class MainForm : Form
         direction,
         caseLabelBox.Text,
         SelectedSide,
-        settings.AdvanceMode is PlacementAdvanceMode.SameCaseThenNext));
+        sameCaseThenNext: false));
       SetStatus(result.Message);
       ApplyNavigationResult(result);
     }
@@ -1536,7 +1536,7 @@ public sealed class MainForm : Form
     string caseLabel,
     EvidenceSide side)
   {
-    SetStatus("次の空いているCASE／Sideを検索しています…");
+    SetStatus("次のCASE／Sideへ移動しています…");
     var result = await StaTask.Run(() => caseNavigationService.Navigate(
       workbook,
       worksheetName,

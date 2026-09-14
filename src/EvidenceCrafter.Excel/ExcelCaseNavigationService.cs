@@ -50,34 +50,16 @@ public sealed class ExcelCaseNavigationService
     }
     var currentIndex = FindCurrentIndex(blocks, snapshot, currentCaseLabel, currentSide);
     var step = direction is CaseNavigationDirection.Previous ? -1 : 1;
-    Block? block = null;
-    for (var index = currentIndex + step; index >= 0 && index < blocks.Length; index += step)
-    {
-      if (!IsOccupied(snapshot, blocks[index]))
-      {
-        block = blocks[index];
-        break;
-      }
-    }
+    var targetIndex = currentIndex + step;
+    Block? block = targetIndex >= 0 && targetIndex < blocks.Length ? blocks[targetIndex] : null;
     if (block is null)
     {
-      if (direction is CaseNavigationDirection.Next)
-      {
-        var nextSheet = NavigateNextWorksheet(workbook, snapshot, currentSide, sameCaseThenNext);
-        if (nextSheet.Succeeded)
-        {
-          return nextSheet;
-        }
-      }
-
-      return CaseNavigationResult.Failed(direction is CaseNavigationDirection.Previous
-        ? "前に空いている配置先はありません。"
-        : "次に空いている配置先はありません。");
+      return NavigateAdjacentWorksheet(workbook, snapshot, currentSide, sameCaseThenNext, direction);
     }
 
     var layout = block.Layout;
     var firstColumn = layout.RegionFor(block.Side).FirstColumn;
-    var target = new CellReference(layout.StartRow + 1, firstColumn + 1);
+    var target = FocusCell(layout, firstColumn, direction);
     var focused = focusService.FocusPlacedImage(workbook, snapshot.WorksheetName, target);
     var caseLabel = ExcelAutomaticPlacementService.FormatCaseLabel(block.Anchor);
     return focused.Succeeded
@@ -87,66 +69,95 @@ public sealed class ExcelCaseNavigationService
       : CaseNavigationResult.Failed(focused.Message);
   }
 
-  private CaseNavigationResult NavigateNextWorksheet(
+  private CaseNavigationResult NavigateAdjacentWorksheet(
     WorkbookIdentity workbook,
     SheetSnapshot current,
     EvidenceSide currentSide,
-    bool sameCaseThenNext)
+    bool sameCaseThenNext,
+    CaseNavigationDirection direction)
   {
-    if (!TryParseEvidenceSheetNumber(current.WorksheetName, out var currentNumber))
-    {
-      return CaseNavigationResult.Failed("次のEvidence Sheetを判定できません。");
-    }
-
-    var candidates = current.WorksheetNames
-      .Select(name => (Name: name, Number: TryParseEvidenceSheetNumber(name, out var number) ? number : -1))
-      .Where(item => item.Number > currentNumber)
-      .OrderBy(item => item.Number);
+    if (!current.WorksheetNames.Contains(current.WorksheetName, StringComparer.OrdinalIgnoreCase))
+      return CaseNavigationResult.Failed("対象ブックのシート一覧を確認できません。更新して再度移動してください。");
+    var candidates = AdjacentWorksheetNames(current.WorksheetNames, current.WorksheetName, direction)
+      .Take(1)
+      .ToArray();
+    var failures = new List<string>();
     foreach (var candidate in candidates)
     {
-      var activated = focusService.FocusPlacedImage(workbook, candidate.Name, new CellReference(1, 1));
+      var activated = focusService.FocusPlacedImage(workbook, candidate, new CellReference(1, 1));
       if (!activated.Succeeded)
       {
+        failures.Add($"{candidate}: {activated.Message}");
         continue;
       }
 
-      var captured = snapshotService.CaptureForNavigation(workbook, candidate.Name);
+      var captured = snapshotService.CaptureForNavigation(workbook, candidate);
       if (!captured.Succeeded || captured.Snapshot is null)
       {
+        failures.Add($"{candidate}: {captured.Message}");
         continue;
       }
 
       var snapshot = captured.Snapshot;
       var blocks = AvailableBlocks(snapshot, currentSide, sameCaseThenNext);
-      foreach (var block in blocks)
+      if (blocks.Length == 0)
+        failures.Add($"{candidate}: CASE／配置先を解析できません。");
+      else
       {
-        if (IsOccupied(snapshot, block))
-        {
-          continue;
-        }
-
+        var block = direction == CaseNavigationDirection.Previous ? blocks[^1] : blocks[0];
         var layout = block.Layout;
         var region = layout.RegionFor(block.Side);
-        var target = new CellReference(layout.StartRow + 1, region.FirstColumn + 1);
-        var focused = focusService.FocusPlacedImage(workbook, candidate.Name, target);
+        var target = FocusCell(layout, region.FirstColumn, direction);
+        var focused = focusService.FocusPlacedImage(workbook, candidate, target);
         if (focused.Succeeded)
         {
           var caseLabel = ExcelAutomaticPlacementService.FormatCaseLabel(block.Anchor);
-          return new CaseNavigationResult(true, candidate.Name, caseLabel, block.Side, target,
-            $"{candidate.Name} / Case {caseLabel} / {block.Side} へ移動しました。")
+          return new CaseNavigationResult(true, candidate, caseLabel, block.Side, target,
+            $"{candidate} / Case {caseLabel} / {block.Side} へ移動しました。")
             { LayoutSignals = snapshot.LayoutSignals, LayoutKind = layout.Kind };
         }
+        failures.Add($"{candidate}: {focused.Message}");
       }
     }
 
-    _ = focusService.FocusPlacedImage(workbook, current.WorksheetName, current.ActiveCell);
-    return CaseNavigationResult.Failed("次のEvidence Sheetに空いている配置先はありません。");
+    var edgeBlocks = AvailableBlocks(current, currentSide, sameCaseThenNext);
+    if (edgeBlocks.Length > 0)
+    {
+      var edgeBlock = direction == CaseNavigationDirection.Next
+        ? edgeBlocks[^1]
+        : edgeBlocks[0];
+      var edgeRegion = edgeBlock.Layout.RegionFor(edgeBlock.Side);
+      var edgeCell = FocusCell(edgeBlock.Layout, edgeRegion.FirstColumn, direction);
+      var edgeFocused = focusService.FocusPlacedImage(workbook, current.WorksheetName, edgeCell);
+      if (edgeFocused.Succeeded)
+      {
+        var edgeCase = ExcelAutomaticPlacementService.FormatCaseLabel(edgeBlock.Anchor);
+        return new CaseNavigationResult(false, current.WorksheetName, edgeCase, edgeBlock.Side, edgeCell,
+          $"これ以上{(direction == CaseNavigationDirection.Next ? "次" : "前")}のCASEはありません。{edgeCase} の端にフォーカスしました。")
+          { LayoutSignals = current.LayoutSignals, LayoutKind = edgeBlock.Layout.Kind };
+      }
+      failures.Add($"CASEの端へのフォーカス: {edgeFocused.Message}");
+    }
+    var label = direction == CaseNavigationDirection.Previous ? "前" : "次";
+    return CaseNavigationResult.Failed(failures.Count > 0
+      ? $"{label}のCASE検索で確認できないシートがあります。{string.Join(" / ", failures)}"
+      : $"これ以上{label}のCASEはありません（隣接シートも確認済み）。");
   }
 
-  private static bool TryParseEvidenceSheetNumber(string name, out int number)
+  private static CellReference FocusCell(
+    EvidenceCaseLayout layout,
+    int firstColumn,
+    CaseNavigationDirection direction) =>
+    new(direction == CaseNavigationDirection.Next ? layout.StartRow + 1 : layout.EndRow, firstColumn + 1);
+
+  internal static IReadOnlyList<string> AdjacentWorksheetNames(
+    IReadOnlyList<string> names, string current, CaseNavigationDirection direction)
   {
-    number = -1;
-    return name.Length > 1 && (name[0] is 'B' or 'b') && int.TryParse(name.AsSpan(1), out number);
+    var index = names.ToList().FindIndex(name => string.Equals(name, current, StringComparison.OrdinalIgnoreCase));
+    if (index < 0) return [];
+    return direction == CaseNavigationDirection.Previous
+      ? names.Take(index).Reverse().Take(1).ToArray()
+      : names.Skip(index + 1).Take(1).ToArray();
   }
 
   private static int FindCurrentIndex(
