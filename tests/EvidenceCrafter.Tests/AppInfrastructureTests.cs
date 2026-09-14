@@ -62,7 +62,8 @@ public sealed class AppInfrastructureTests
     Assert.IsTrue(loaded.DarkMode);
     Assert.AreEqual(100, loaded.EffectiveThemeIntensity);
     Assert.AreEqual(Color.FromArgb(48, 96, 160).ToArgb(), loaded.EffectiveThemeColor.ToArgb());
-    Assert.AreEqual(40, loaded.EffectiveWindowOpacityPercent);
+    Assert.AreEqual(50, loaded.EffectiveWindowOpacityPercent);
+    Assert.AreEqual(100, new EvidenceCrafterSettings().EffectiveWindowOpacityPercent);
     var savedJson = File.ReadAllText(path);
     Assert.IsFalse(savedJson.Contains("Workbook", StringComparison.Ordinal));
     Assert.IsFalse(savedJson.Contains("Side", StringComparison.Ordinal));

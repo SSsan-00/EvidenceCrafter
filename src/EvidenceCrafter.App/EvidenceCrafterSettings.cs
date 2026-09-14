@@ -6,6 +6,8 @@ internal sealed record EvidenceCrafterSettings
 {
   internal const double DefaultHorizontalMarginPoints = 6;
   internal const int DefaultThemeColorArgb = unchecked((int)0xFF0D1117);
+  internal const int DefaultWindowOpacityPercent = 100;
+  internal const int MinimumWindowOpacityPercent = 50;
   public double HorizontalMarginPoints { get; init; } = DefaultHorizontalMarginPoints;
 
   public bool DiagnosticLoggingEnabled { get; init; } = true;
@@ -37,7 +39,10 @@ internal sealed record EvidenceCrafterSettings
 
   internal Color EffectiveThemeColor => Color.FromArgb(ThemeColorArgb ?? DefaultThemeColorArgb);
 
-  internal int EffectiveWindowOpacityPercent => Math.Clamp(WindowOpacityPercent ?? 100, 40, 100);
+  internal int EffectiveWindowOpacityPercent => Math.Clamp(
+    WindowOpacityPercent ?? DefaultWindowOpacityPercent,
+    MinimumWindowOpacityPercent,
+    100);
 
   internal EvidenceCrafterSettings Normalize() => this with
   {

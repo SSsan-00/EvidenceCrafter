@@ -93,7 +93,11 @@ public sealed class MainForm : Form
     this.sessionCatalog = sessionCatalog ?? throw new ArgumentNullException(nameof(sessionCatalog));
     caseMaintenanceService = new ExcelCaseMaintenanceService(rowMutationService);
     replacementLayoutService = new ExcelManagedReplacementLayoutService(rowMutationService);
-    settings = settingsStore.Load();
+    // Always start fully opaque (0% transparency); users can adjust the slider after launch.
+    settings = settingsStore.Load() with
+    {
+      WindowOpacityPercent = EvidenceCrafterSettings.DefaultWindowOpacityPercent,
+    };
     UiTheme.SetThemeIntensity(settings.EffectiveThemeIntensity);
     UiTheme.SetThemeColor(settings.EffectiveThemeColor);
     clipboardRetryTimer.Tick += (_, _) =>
@@ -209,7 +213,7 @@ public sealed class MainForm : Form
     AutoScaleMode = AutoScaleMode.Dpi;
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
-    Opacity = settings.EffectiveWindowOpacityPercent / 100d;
+    Opacity = EvidenceCrafterSettings.DefaultWindowOpacityPercent / 100d;
 
     var layout = new TableLayoutPanel
     {
@@ -256,9 +260,9 @@ public sealed class MainForm : Form
     var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ");
     var darkThemeLabel = CreateThemeLabel("☾", "ダークテーマ");
     opacitySlider.AccessibleName = "ウィンドウの不透明度";
-    opacitySlider.MinimumValue = 40;
+    opacitySlider.MinimumValue = EvidenceCrafterSettings.MinimumWindowOpacityPercent;
     opacitySlider.MaximumValue = 100;
-    opacitySlider.Value = settings.EffectiveWindowOpacityPercent;
+    opacitySlider.Value = EvidenceCrafterSettings.DefaultWindowOpacityPercent;
     opacitySlider.Width = 118;
     opacitySlider.Height = 28;
     opacitySlider.BackColor = UiTheme.Canvas;

@@ -55,12 +55,12 @@ public sealed class ThemeReviewTests
   [TestMethod]
   public void Slider_CaptureLossStopsDraggingAndEndpointsStayInRange() => OnSta(() =>
   {
-    using var slider = new ThemeGradientSlider { MinimumValue = 40, Value = 70 };
+    using var slider = new ThemeGradientSlider { MinimumValue = 50, Value = 70 };
     void Mouse(string name, int x) => typeof(ThemeGradientSlider)
       .GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!
       .Invoke(slider, [new MouseEventArgs(MouseButtons.Left, 1, x, 15, 0)]);
     Mouse("OnMouseDown", 0);
-    Assert.AreEqual(40, slider.Value);
+    Assert.AreEqual(50, slider.Value);
     Assert.IsTrue(slider.Capture);
     Mouse("OnMouseMove", 1000);
     Assert.AreEqual(100, slider.Value);
