@@ -177,7 +177,8 @@ public sealed class ExcelAutomaticPlacementService
           index == 0 && preferActiveGap,
           contents,
           rowHeights,
-          ScaleOverride: images[index].ScaleOverride ?? pair?.Scale));
+          ScaleOverride: images[index].ScaleOverride ?? pair?.Scale,
+          PreferredStartRow: pair?.StartRow));
         plans.Add(new AutomaticPlacementStep(index, images[index], plan, width) { Pair = pair });
         ApplyPlanToModel(plan, side, ref layout, contents, rowHeights);
       }
@@ -625,12 +626,14 @@ public sealed class ExcelAutomaticPlacementService
     if (reference.SourceDimensions is { } source)
     {
       var scale = Math.Min(width / image.WidthPoints, referenceWidth / source.WidthPoints);
-      return new(reference.Name, scale, source.WidthPoints * scale, source.HeightPoints * scale, reference.EndRow, false);
+      return new(reference.Name, scale, source.WidthPoints * scale, source.HeightPoints * scale,
+        reference.StartRow, reference.EndRow, false);
     }
     // Legacy pictures lack their original dimensions: match displayed widths, preserving aspect ratios.
     var commonWidth = Math.Min(width, referenceWidth);
     return new(reference.Name, commonWidth / image.WidthPoints, commonWidth,
-      reference.HeightPoints * commonWidth / reference.WidthPoints, reference.EndRow, true);
+      reference.HeightPoints * commonWidth / reference.WidthPoints,
+      reference.StartRow, reference.EndRow, true);
   }
 
   private static string Fingerprint(SheetSnapshot snapshot)

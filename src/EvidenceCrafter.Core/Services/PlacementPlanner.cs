@@ -61,7 +61,22 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
     var reason = "Placed after the last content in the selected side.";
     int startRow;
 
-    if (request.PreferActiveGap && activeRowIsFree)
+    if (request.PreferredStartRow is { } preferredStartRow)
+    {
+      if (preferredStartRow < firstPlacementRow || preferredStartRow > request.Layout.EndRow)
+      {
+        throw new InvalidOperationException("対応する反対Side画像の開始行がCASE範囲外です。");
+      }
+      if (relevantContents.Any(content => Covers(content, preferredStartRow)) ||
+        !HasRequiredGapBefore(preferredStartRow, relevantContents, request.ImageGapRows))
+      {
+        throw new InvalidOperationException("対応する反対Side画像と同じ開始行には既存コンテンツがあるため配置できません。");
+      }
+      startRow = preferredStartRow;
+      mode = preferredStartRow == firstPlacementRow ? PlacementMode.CaseStart : PlacementMode.Gap;
+      reason = "Aligned with the corresponding image on the opposite side.";
+    }
+    else if (request.PreferActiveGap && activeRowIsFree)
     {
       startRow = request.ActiveRow;
       mode = PlacementMode.Gap;

@@ -319,6 +319,7 @@ public sealed class AutomaticPlacementServiceTests
     Assert.AreEqual(1.34, pair.Scale, 0.001);
     Assert.AreEqual(268, pair.Width, 0.001);
     Assert.AreEqual(134, result.Steps[0].Plan.Image.WidthPoints, 0.001);
+    Assert.AreEqual(5, result.Steps[0].Plan.StartRow);
   }
 
   [TestMethod]
@@ -344,6 +345,7 @@ public sealed class AutomaticPlacementServiceTests
     var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected the second opposite-side image.");
     Assert.AreEqual("new-2", pair.ShapeName);
     Assert.AreEqual(2.233, pair.Scale, 0.001);
+    Assert.AreEqual(20, result.Steps[0].Plan.StartRow);
   }
 
   [TestMethod]

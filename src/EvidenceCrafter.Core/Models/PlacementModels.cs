@@ -45,7 +45,8 @@ public sealed record PlacementRequest(
   int ImageGapRows = 2,
   int TailRows = 4,
   double DefaultRowHeightPoints = 15.0,
-  double? ScaleOverride = null);
+  double? ScaleOverride = null,
+  int? PreferredStartRow = null);
 
 public sealed record PlacementPlan(
   PlacementMode Mode,

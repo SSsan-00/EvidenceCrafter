@@ -83,6 +83,33 @@ public sealed class PlacementPlannerTests
   }
 
   [TestMethod]
+  public void Plan_PairedImage_UsesOppositeSideStartRow()
+  {
+    var request = CreateRequest(
+      [new ContentSpan(EvidenceSide.New, 5, 10, ContentKind.ManagedImage)]) with
+    {
+      PreferredStartRow = 20,
+    };
+
+    var result = planner.Plan(request);
+
+    Assert.AreEqual(20, result.StartRow);
+    Assert.AreEqual(new CellReference(20, 4), result.FocusCell);
+  }
+
+  [TestMethod]
+  public void Plan_PairedImage_RejectsOccupiedAlignedStartRow()
+  {
+    var request = CreateRequest(
+      [new ContentSpan(EvidenceSide.New, 18, 22, ContentKind.ManagedImage)]) with
+    {
+      PreferredStartRow = 20,
+    };
+
+    Assert.ThrowsExactly<InvalidOperationException>(() => planner.Plan(request));
+  }
+
+  [TestMethod]
   public void Plan_CaptionInsideReservedBand_DoesNotAddAnotherGap()
   {
     ContentSpan[] contents =

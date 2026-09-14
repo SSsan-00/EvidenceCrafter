@@ -2,7 +2,14 @@ using EvidenceCrafter.Core.Models;
 
 namespace EvidenceCrafter.Excel;
 
-public sealed record PairedImagePlan(string ShapeName, double Scale, double Width, double Height, int EndRow, bool Legacy);
+public sealed record PairedImagePlan(
+  string ShapeName,
+  double Scale,
+  double Width,
+  double Height,
+  int StartRow,
+  int EndRow,
+  bool Legacy);
 
 /// <summary>The reference resize and its reserved rows form one reversible part of automatic placement.</summary>
 public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTarget after, AppliedRowInsertion? insertion)
