@@ -310,6 +310,8 @@ internal sealed class ThemeColorPickerButton : Button
 internal sealed class ThemeGradientSlider : Control
 {
   private const int TrackHeight = 12;
+  private const int TrackHorizontalInset = 4;
+  private const int ThumbHorizontalInset = 8;
   private int value;
   private int minimumValue;
   private int maximumValue = 100;
@@ -475,13 +477,27 @@ internal sealed class ThemeGradientSlider : Control
 
   private Rectangle GetTrackBounds()
   {
-    var width = Math.Max(1, ClientSize.Width - 20);
-    return new Rectangle(10, Math.Max(0, (ClientSize.Height - TrackHeight) / 2), width, TrackHeight);
+    var width = Math.Max(1, ClientSize.Width - TrackHorizontalInset * 2);
+    return new Rectangle(
+      TrackHorizontalInset,
+      Math.Max(0, (ClientSize.Height - TrackHeight) / 2),
+      width,
+      TrackHeight);
+  }
+
+  private Rectangle GetThumbTrackBounds()
+  {
+    var width = Math.Max(1, ClientSize.Width - ThumbHorizontalInset * 2);
+    return new Rectangle(
+      ThumbHorizontalInset,
+      Math.Max(0, (ClientSize.Height - TrackHeight) / 2),
+      width,
+      TrackHeight);
   }
 
   private int ValueToX(int currentValue)
   {
-    var track = GetTrackBounds();
+    var track = GetThumbTrackBounds();
     return track.Left + (int)Math.Round(
       track.Width * (currentValue - minimumValue) / (double)(maximumValue - minimumValue),
       MidpointRounding.AwayFromZero);
@@ -489,7 +505,7 @@ internal sealed class ThemeGradientSlider : Control
 
   private int XToValue(int x)
   {
-    var track = GetTrackBounds();
+    var track = GetThumbTrackBounds();
     return track.Width <= 0
       ? minimumValue
       : minimumValue + (int)Math.Round(

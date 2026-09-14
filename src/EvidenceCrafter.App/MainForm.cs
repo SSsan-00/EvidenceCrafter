@@ -209,7 +209,7 @@ public sealed class MainForm : Form
     Text = "EvidenceCrafter";
     StartPosition = FormStartPosition.CenterScreen;
     MinimumSize = new Size(760, 370);
-    Size = new Size(760, 370);
+    Size = new Size(820, 370);
     AutoScaleMode = AutoScaleMode.Dpi;
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
@@ -255,12 +255,12 @@ public sealed class MainForm : Form
       Padding = new Padding(0, 2, 0, 0),
     };
     UiTheme.StyleCanvas(themePanel);
-    var transparentLabel = CreateThemeLabel("◌", "透過が強い");
-    var opaqueLabel = CreateThemeLabel("●", "不透明");
-    var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ");
-    var darkThemeLabel = CreateThemeLabel("☾", "ダークテーマ");
-    opaqueLabel.Margin = new Padding(0, 0, 10, 0);
-    lightThemeLabel.Margin = new Padding(10, 0, 0, 0);
+    var transparentLabel = CreateThemeLabel("◌", "透過が強い", ContentAlignment.MiddleRight);
+    var opaqueLabel = CreateThemeLabel("●", "不透明", ContentAlignment.MiddleLeft);
+    var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ", ContentAlignment.MiddleRight);
+    var darkThemeLabel = CreateThemeLabel("☾", "ダークテーマ", ContentAlignment.MiddleLeft);
+    opaqueLabel.Margin = new Padding(0, 0, 12, 0);
+    lightThemeLabel.Margin = new Padding(12, 0, 0, 0);
     opacitySlider.AccessibleName = "ウィンドウの不透明度";
     opacitySlider.MinimumValue = EvidenceCrafterSettings.MinimumWindowOpacityPercent;
     opacitySlider.MaximumValue = 100;
@@ -268,7 +268,7 @@ public sealed class MainForm : Form
     opacitySlider.Width = 118;
     opacitySlider.Height = 28;
     opacitySlider.BackColor = UiTheme.Canvas;
-    opacitySlider.Margin = Padding.Empty;
+    opacitySlider.Margin = new Padding(-2, 0, -2, 0);
     opacitySlider.ValueChanged += (_, _) =>
     {
       Opacity = opacitySlider.Value / 100d;
@@ -284,7 +284,7 @@ public sealed class MainForm : Form
     themeSlider.Height = 28;
     themeSlider.BackColor = UiTheme.Canvas;
     // Keep equal bar-to-icon spacing; the icon margins above provide the inter-bar gap.
-    themeSlider.Margin = Padding.Empty;
+    themeSlider.Margin = new Padding(-2, 0, -2, 0);
     themeSlider.ValueChanged += (_, _) =>
     {
       UiTheme.SetThemeIntensity(themeSlider.Value);
@@ -598,17 +598,21 @@ public sealed class MainForm : Form
     return label;
   }
 
-  private static Label CreateThemeLabel(string icon, string accessibleName)
+  private static Label CreateThemeLabel(
+    string icon,
+    string accessibleName,
+    ContentAlignment alignment = ContentAlignment.MiddleCenter)
   {
     var label = new Label
     {
       AutoSize = false,
+      // Keep a full icon slot so glyphs remain intact at every DPI.
       Size = new Size(22, 28),
       Text = icon,
       AccessibleName = accessibleName,
       AccessibleRole = AccessibleRole.Indicator,
       Font = new Font("Segoe UI Symbol", 15F, FontStyle.Regular),
-      TextAlign = ContentAlignment.MiddleCenter,
+      TextAlign = alignment,
       Anchor = AnchorStyles.None,
       Margin = new Padding(0),
     };
