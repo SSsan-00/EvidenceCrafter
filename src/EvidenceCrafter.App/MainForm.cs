@@ -259,6 +259,8 @@ public sealed class MainForm : Form
     var opaqueLabel = CreateThemeLabel("●", "不透明");
     var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ");
     var darkThemeLabel = CreateThemeLabel("☾", "ダークテーマ");
+    opaqueLabel.Margin = new Padding(0, 0, 10, 0);
+    lightThemeLabel.Margin = new Padding(10, 0, 0, 0);
     opacitySlider.AccessibleName = "ウィンドウの不透明度";
     opacitySlider.MinimumValue = EvidenceCrafterSettings.MinimumWindowOpacityPercent;
     opacitySlider.MaximumValue = 100;
@@ -281,8 +283,8 @@ public sealed class MainForm : Form
     themeSlider.Width = 142;
     themeSlider.Height = 28;
     themeSlider.BackColor = UiTheme.Canvas;
-    // Keep the opacity and theme controls visually distinct in the compact header.
-    themeSlider.Margin = new Padding(14, 0, 6, 0);
+    // Keep equal bar-to-icon spacing; the icon margins above provide the inter-bar gap.
+    themeSlider.Margin = new Padding(6, 0, 6, 0);
     themeSlider.ValueChanged += (_, _) =>
     {
       UiTheme.SetThemeIntensity(themeSlider.Value);
