@@ -208,8 +208,8 @@ public sealed class MainForm : Form
   {
     Text = "EvidenceCrafter";
     StartPosition = FormStartPosition.CenterScreen;
-    MinimumSize = new Size(760, 370);
-    Size = new Size(820, 370);
+    MinimumSize = new Size(920, 370);
+    Size = new Size(980, 370);
     AutoScaleMode = AutoScaleMode.Dpi;
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
@@ -313,6 +313,8 @@ public sealed class MainForm : Form
     themePanel.Controls.Add(themeSlider);
     themePanel.Controls.Add(darkThemeLabel);
     themePanel.Controls.Add(themeColorButton);
+    // Do not allow the slider endpoint icons or color button to be clipped by a narrow header cell.
+    themePanel.MinimumSize = themePanel.GetPreferredSize(Size.Empty);
     header.Controls.Add(themePanel, 1, 0);
     var topmost = new ThemedCheckBox
     {
@@ -521,7 +523,7 @@ public sealed class MainForm : Form
       .Sum(control => control.GetPreferredSize(Size.Empty).Width + control.Margin.Horizontal) +
       header.Padding.Horizontal + layout.Padding.Horizontal;
     var requiredClientSize = new Size(
-      Math.Max(760, Math.Max(preferred.Width, headerWidth)),
+      Math.Max(920, Math.Max(preferred.Width, headerWidth)),
       Math.Max(370, preferred.Height));
     MinimumSize = SizeFromClientSize(requiredClientSize);
     if (ClientSize.Width < requiredClientSize.Width || ClientSize.Height < requiredClientSize.Height)
@@ -621,8 +623,8 @@ public sealed class MainForm : Form
     var label = new Label
     {
       AutoSize = false,
-      // Keep a full icon slot so glyphs remain intact at every DPI.
-      Size = new Size(22, 28),
+      // Keep generous horizontal and vertical room for Segoe UI Symbol glyph overhang.
+      Size = new Size(30, 34),
       Text = icon,
       AccessibleName = accessibleName,
       AccessibleRole = AccessibleRole.Indicator,
