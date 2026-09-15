@@ -65,7 +65,7 @@ public sealed class ExcelManagedShapeService
         shapes = GetRequiredProperty(sheet, "Shapes");
         shape = InvokeMethod(shapes, "Item", expected.ShapeName)!;
         if (!TryReadManagedTarget(shape, workbook, out var current, out _) || !TargetUnchanged(expected, current))
-          return ManagedShapeMutationResult.Failed("参照画像が変更されたため倍率変更を停止しました。");
+          return ManagedShapeMutationResult.Failed("参照画像が変更されたため倍率変更を停止しました。") with { ReferenceChanged = true };
         var count = Convert.ToInt32(GetRequiredProperty(shapes, "Count"), CultureInfo.InvariantCulture);
         for (var i = 1; i <= count; i++)
         {
@@ -97,7 +97,7 @@ public sealed class ExcelManagedShapeService
         {
           try { Apply(expected); }
           catch (Exception restoreError) when (IsAutomationFailure(restoreError))
-          { return ManagedShapeMutationResult.Failed("参照画像の倍率変更と復元に失敗しました。保存せず状態を確認してください。"); }
+          { return ManagedShapeMutationResult.Failed("参照画像の倍率変更と復元に失敗しました。保存せず状態を確認してください。") with { CompensationSucceeded = false }; }
         }
         return ManagedShapeMutationResult.Failed($"参照画像の倍率変更に失敗しました: {exception.Message}");
       }
@@ -1174,6 +1174,8 @@ public sealed record ManagedShapeMutationResult(
   ManagedShapeTarget? After,
   string Message)
 {
+  public bool ReferenceChanged { get; init; }
+  public bool CompensationSucceeded { get; init; } = true;
   public static ManagedShapeMutationResult Failed(string message) => new(false, false, null, null, message);
 }
 

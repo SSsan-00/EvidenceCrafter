@@ -17,6 +17,8 @@ public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTar
   public ManagedShapeTarget Before { get; } = before;
   public ManagedShapeTarget After { get; private set; } = after;
   public AppliedRowInsertion? Insertion { get; } = insertion;
+  internal bool CanRetryPreparation { get; private set; }
+  internal bool CompensationSucceeded { get; private set; } = true;
   private readonly ExcelManagedShapeService shapes = new();
   private readonly ExcelRowMutationService rows = new();
 
@@ -29,36 +31,47 @@ public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTar
 
   public RowMutationResult SetApplied(WorkbookIdentity workbook, bool apply)
   {
+    CanRetryPreparation = false;
+    CompensationSucceeded = true;
     RowMutationResult Failed(string message) => RowMutationResult.Failed(RowMutationOperation.Insert, Before.WorksheetName, message);
-    if (!Matches(workbook, !apply)) return Failed("参照画像が変更されたためUndo/Redoを停止しました。");
+    if (!Matches(workbook, !apply))
+    {
+      CanRetryPreparation = apply;
+      return Failed("参照画像が変更されたためUndo/Redoを停止しました。");
+    }
     if (apply && Insertion is { } added)
     {
       var insert = rows.InsertRows(workbook, added.WorksheetName, new(added.StartRow, added.Count, added.Reason));
-      if (!insert.Succeeded) return insert;
+      if (!insert.Succeeded || !insert.Changed) return Failed(insert.Message);
       var normalize = rows.NormalizeInsertedRows(workbook, added.WorksheetName, added.StartRow, added.Count, 15);
       if (!normalize.Succeeded)
       {
         var rollback = rows.DeleteRowsIfSafe(workbook, added.WorksheetName, added.StartRow, added.Count);
-        return Failed(normalize.Message + (rollback.Succeeded ? "" : " 行の復元にも失敗しました。"));
+        CompensationSucceeded = rollback.Succeeded && rollback.Changed;
+        return Failed(normalize.Message + (CompensationSucceeded ? "" : " 行の復元にも失敗しました。"));
       }
     }
     var resize = shapes.Resize(workbook, apply ? Before : After, apply ? After : Before);
     if (!resize.Succeeded)
     {
+      CompensationSucceeded = resize.CompensationSucceeded;
       if (apply && Insertion is { } addedRows)
       {
         var rollback = rows.DeleteRowsIfSafe(workbook, addedRows.WorksheetName, addedRows.StartRow, addedRows.Count);
-        if (!rollback.Succeeded) return Failed(resize.Message + " 追加行を復元できませんでした。");
+        CompensationSucceeded &= rollback.Succeeded && rollback.Changed;
+        if (!rollback.Succeeded || !rollback.Changed) return Failed(resize.Message + " 追加行を復元できませんでした。");
       }
+      CanRetryPreparation = apply && resize.ReferenceChanged && CompensationSucceeded;
       return Failed(resize.Message);
     }
     if (apply) After = resize.After!;
     if (!apply && Insertion is { } removed)
     {
       var deletion = rows.DeleteRowsIfSafe(workbook, removed.WorksheetName, removed.StartRow, removed.Count);
-      if (!deletion.Succeeded)
+      if (!deletion.Succeeded || !deletion.Changed)
       {
         var restored = shapes.Resize(workbook, resize.After!, After);
+        CompensationSucceeded = restored.Succeeded;
         return Failed(deletion.Message + (restored.Succeeded ? "" : " 参照画像の復元にも失敗しました。"));
       }
     }

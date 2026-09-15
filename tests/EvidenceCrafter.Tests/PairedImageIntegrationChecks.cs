@@ -37,6 +37,19 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       if (side == EvidenceSide.New)
       {
         newNames.Add(placed.PlacedImages[0].ShapeName);
+        if (pass == 0)
+        {
+          var original = shapes.Inspect(identity, "OtherTarget", placed.PlacedImages[0].ShapeName).Shape!;
+          var staleResize = new PairedImageResize(original, original, null);
+          var edited = shapes.Resize(identity, original, original with { WidthPoints = original.WidthPoints * 0.9 });
+          Assert.IsTrue(edited.Succeeded, edited.Message);
+          Assert.IsFalse(staleResize.SetApplied(identity, true).Succeeded);
+          Assert.IsTrue(staleResize.CanRetryPreparation, "Initial placement may re-analyze a changed reference.");
+          Assert.IsTrue(staleResize.CompensationSucceeded, "The failed precheck must not mutate Excel.");
+          Assert.IsFalse(staleResize.SetApplied(identity, false).Succeeded);
+          Assert.IsFalse(staleResize.CanRetryPreparation, "Undo must keep its strict expected-state check.");
+          Assert.IsTrue(shapes.Resize(identity, edited.After!, original).Succeeded);
+        }
         continue;
       }
       var snapshot = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot!;
@@ -85,6 +98,12 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             insertion.WorksheetName, insertion.StartRow, insertion.Count);
           Assert.IsTrue(removed.Succeeded, removed.Message);
         }
+        var reservedRow = placed.ReferenceResize.Insertion!.StartRow;
+        SetCellValue(sheet, reservedRow, 1, "Keep this user entry");
+        var blockedUndo = placed.ReferenceResize.SetApplied(identity, false);
+        Assert.IsFalse(blockedUndo.Succeeded, "Skipped row deletion must not be reported as successful Undo.");
+        Assert.IsTrue(placed.ReferenceResize.Matches(identity, true), "Blocked Undo must restore the applied image size.");
+        SetCellValue(sheet, reservedRow, 1, null!);
         var undo = placed.ReferenceResize.SetApplied(identity, false);
         Assert.IsTrue(undo.Succeeded, undo.Message);
         Assert.IsTrue(placed.ReferenceResize.Matches(identity, false));

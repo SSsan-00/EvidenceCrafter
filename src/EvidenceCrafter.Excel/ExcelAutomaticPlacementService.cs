@@ -277,7 +277,7 @@ public sealed class ExcelAutomaticPlacementService
       // transient mismatch to the user.
       for (var attempt = 0; attempt < 2; attempt++)
       {
-        var pair = initialAnalysis.Steps[0].Pair!;
+        if (initialAnalysis.Steps[0].Pair is not { } pair) break;
         var service = new ExcelManagedShapeService();
         var inspected = service.Inspect(workbook, initialAnalysis.WorksheetName, pair.ShapeName);
         if (!inspected.Succeeded || inspected.Shape is not { } before)
@@ -292,8 +292,7 @@ public sealed class ExcelAutomaticPlacementService
         var reference = new PairedImageResize(before, desired, count > 0
           ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域") : null);
         var prepared = reference.SetApplied(workbook, true);
-        if (!prepared.Succeeded && attempt == 0 &&
-          prepared.Message.Contains("参照画像が変更されたため倍率変更を停止しました。", StringComparison.Ordinal))
+        if (!prepared.Succeeded && attempt == 0 && reference.CanRetryPreparation)
         {
           var refreshed = Analyze(workbook, worksheetName, side, images, preferActiveGap,
             horizontalMarginPoints, requestedCaseLabel ?? initialAnalysis.CaseLabel);
@@ -302,7 +301,11 @@ public sealed class ExcelAutomaticPlacementService
           initialAnalysis = refreshed;
           continue;
         }
-        if (!prepared.Succeeded) return AutomaticPlacementResult.Failed(prepared.Message, initialAnalysis);
+        if (!prepared.Succeeded) return AutomaticPlacementResult.Failed(prepared.Message, initialAnalysis) with
+        {
+          CompensationSucceeded = reference.CompensationSucceeded,
+          CompensationErrors = reference.CompensationSucceeded ? [] : [prepared.Message],
+        };
         var result = PlaceImages(workbook, worksheetName, side,
           [images[0] with { ScaleOverride = pair.Scale }], preferActiveGap, horizontalMarginPoints,
           requestedCaseLabel: initialAnalysis.CaseLabel, referencePrepared: true);
@@ -312,7 +315,6 @@ public sealed class ExcelAutomaticPlacementService
         return result with { CompensationSucceeded = undone.Succeeded,
           Message = result.Message + (undone.Succeeded ? "" : " " + undone.Message) };
       }
-      return AutomaticPlacementResult.Failed("参照画像の状態が安定しないため配置を中止しました。", initialAnalysis);
     }
     var placed = new List<AutomaticPlacedImage>();
     var executedSteps = new List<AutomaticPlacementStep>();
