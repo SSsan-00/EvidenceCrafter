@@ -232,7 +232,9 @@ public sealed class MainForm : Form
 
     var header = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 3 };
     UiTheme.StyleCanvas(header);
-    header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+    // Keep the product name at its measured width; a Percent column can collapse it
+    // when the theme controls consume the minimum window width.
+    header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
     var title = new Label
@@ -242,7 +244,7 @@ public sealed class MainForm : Form
       Font = new Font("Meiryo UI", 15F, FontStyle.Bold),
       Anchor = AnchorStyles.Left,
       Margin = new Padding(7, 2, 0, 8),
-      AutoEllipsis = true,
+      AutoEllipsis = false,
       TextAlign = ContentAlignment.MiddleLeft,
       UseCompatibleTextRendering = false,
     };
