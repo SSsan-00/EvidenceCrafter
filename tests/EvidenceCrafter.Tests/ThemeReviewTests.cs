@@ -69,6 +69,24 @@ public sealed class ThemeReviewTests
     Assert.AreEqual(100, slider.Value, "Losing capture must stop a drag even without MouseUp.");
   });
 
+  [TestMethod]
+  public void SingleLineLabel_ReportsTheFullUnwrappedTitleWidth() => OnSta(() =>
+  {
+    using var label = new SingleLineLabel
+    {
+      Text = "EvidenceCrafter",
+      Font = new Font("Meiryo UI", 15F, FontStyle.Bold),
+      MinimumSize = new Size(1, 1),
+    };
+
+    var expected = TextRenderer.MeasureText(
+      label.Text,
+      label.Font,
+      Size.Empty,
+      TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+    Assert.IsGreaterThanOrEqualTo(expected.Width, label.GetPreferredSize(Size.Empty).Width);
+  });
+
   private static double Contrast(Color first, Color second)
   {
     static double Luminance(Color color)

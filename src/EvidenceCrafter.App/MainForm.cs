@@ -237,14 +237,13 @@ public sealed class MainForm : Form
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-    var title = new Label
+    var title = new SingleLineLabel
     {
       AutoSize = false,
       Text = "EvidenceCrafter",
       Font = new Font("Meiryo UI", 15F, FontStyle.Bold),
       Anchor = AnchorStyles.Left,
       Margin = new Padding(7, 2, 0, 8),
-      AutoEllipsis = false,
       TextAlign = ContentAlignment.MiddleLeft,
       UseCompatibleTextRendering = false,
     };

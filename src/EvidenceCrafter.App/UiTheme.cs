@@ -263,6 +263,33 @@ internal sealed class ThemedCheckBox : CheckBox
   protected override bool ShowFocusCues => false;
 }
 
+/// <summary>Keeps compact header text on one line even when TableLayout constrains the cell.</summary>
+internal sealed class SingleLineLabel : Label
+{
+  public override Size GetPreferredSize(Size proposedSize)
+  {
+    var measured = TextRenderer.MeasureText(
+      Text,
+      Font,
+      Size.Empty,
+      TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix);
+    return new Size(Math.Max(MinimumSize.Width, measured.Width), Math.Max(MinimumSize.Height, measured.Height));
+  }
+
+  protected override void OnPaint(PaintEventArgs eventArgs)
+  {
+    eventArgs.Graphics.Clear(BackColor);
+    TextRenderer.DrawText(
+      eventArgs.Graphics,
+      Text,
+      Font,
+      ClientRectangle,
+      ForeColor,
+      TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix |
+      TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+  }
+}
+
 internal sealed class ThemeColorPickerButton : Button
 {
   private bool hovered;
