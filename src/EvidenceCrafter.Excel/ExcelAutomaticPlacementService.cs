@@ -270,31 +270,49 @@ public sealed class ExcelAutomaticPlacementService
     }
 
     var appliedRows = new List<AppliedRowInsertion>();
-    if (!referencePrepared && images.Count == 1 && initialAnalysis.Steps[0].Pair is { } pair)
+    if (!referencePrepared && images.Count == 1 && initialAnalysis.Steps[0].Pair is not null)
     {
-      var service = new ExcelManagedShapeService();
-      var inspected = service.Inspect(workbook, initialAnalysis.WorksheetName, pair.ShapeName);
-      if (!inspected.Succeeded || inspected.Shape is not { } before)
-        return AutomaticPlacementResult.Failed(inspected.Message, initialAnalysis);
-      var metadata = before.Metadata with { AppliedScale = pair.Legacy ? null : pair.Scale };
-      var desired = before with { WidthPoints = pair.Width, HeightPoints = pair.Height,
-        Metadata = metadata, AlternativeText = metadata.Serialize() };
-      var extra = pair.Height - before.HeightPoints;
-      var count = extra > 0.05 ? checked((int)Math.Ceiling(extra / 15) + 1) : 0;
-      if ((long)pair.EndRow + count > ExcelWorksheetLimits.MaximumRow)
-        return AutomaticPlacementResult.Failed("必要な行数がシート上限を超えます。", initialAnalysis);
-      var reference = new PairedImageResize(before, desired, count > 0
-        ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域") : null);
-      var prepared = reference.SetApplied(workbook, true);
-      if (!prepared.Succeeded) return AutomaticPlacementResult.Failed(prepared.Message, initialAnalysis);
-      var result = PlaceImages(workbook, worksheetName, side,
-        [images[0] with { ScaleOverride = pair.Scale }], preferActiveGap, horizontalMarginPoints,
-        requestedCaseLabel: initialAnalysis.CaseLabel, referencePrepared: true);
-      if (result.Succeeded) return result with { ReferenceResize = reference };
-      if (!result.CompensationSucceeded) return result with { ReferenceResize = reference };
-      var undone = reference.SetApplied(workbook, false);
-      return result with { CompensationSucceeded = undone.Succeeded,
-        Message = result.Message + (undone.Succeeded ? "" : " " + undone.Message) };
+      // Excel can be edited between Inspect and SetApplied. Re-analyze once so
+      // placement uses the latest reference geometry instead of surfacing a
+      // transient mismatch to the user.
+      for (var attempt = 0; attempt < 2; attempt++)
+      {
+        var pair = initialAnalysis.Steps[0].Pair!;
+        var service = new ExcelManagedShapeService();
+        var inspected = service.Inspect(workbook, initialAnalysis.WorksheetName, pair.ShapeName);
+        if (!inspected.Succeeded || inspected.Shape is not { } before)
+          return AutomaticPlacementResult.Failed(inspected.Message, initialAnalysis);
+        var metadata = before.Metadata with { AppliedScale = pair.Legacy ? null : pair.Scale };
+        var desired = before with { WidthPoints = pair.Width, HeightPoints = pair.Height,
+          Metadata = metadata, AlternativeText = metadata.Serialize() };
+        var extra = pair.Height - before.HeightPoints;
+        var count = extra > 0.05 ? checked((int)Math.Ceiling(extra / 15) + 1) : 0;
+        if ((long)pair.EndRow + count > ExcelWorksheetLimits.MaximumRow)
+          return AutomaticPlacementResult.Failed("必要な行数がシート上限を超えます。", initialAnalysis);
+        var reference = new PairedImageResize(before, desired, count > 0
+          ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域") : null);
+        var prepared = reference.SetApplied(workbook, true);
+        if (!prepared.Succeeded && attempt == 0 &&
+          prepared.Message.Contains("参照画像が変更されたため倍率変更を停止しました。", StringComparison.Ordinal))
+        {
+          var refreshed = Analyze(workbook, worksheetName, side, images, preferActiveGap,
+            horizontalMarginPoints, requestedCaseLabel ?? initialAnalysis.CaseLabel);
+          if (!refreshed.Succeeded)
+            return AutomaticPlacementResult.Failed(refreshed.Message, refreshed);
+          initialAnalysis = refreshed;
+          continue;
+        }
+        if (!prepared.Succeeded) return AutomaticPlacementResult.Failed(prepared.Message, initialAnalysis);
+        var result = PlaceImages(workbook, worksheetName, side,
+          [images[0] with { ScaleOverride = pair.Scale }], preferActiveGap, horizontalMarginPoints,
+          requestedCaseLabel: initialAnalysis.CaseLabel, referencePrepared: true);
+        if (result.Succeeded) return result with { ReferenceResize = reference };
+        if (!result.CompensationSucceeded) return result with { ReferenceResize = reference };
+        var undone = reference.SetApplied(workbook, false);
+        return result with { CompensationSucceeded = undone.Succeeded,
+          Message = result.Message + (undone.Succeeded ? "" : " " + undone.Message) };
+      }
+      return AutomaticPlacementResult.Failed("参照画像の状態が安定しないため配置を中止しました。", initialAnalysis);
     }
     var placed = new List<AutomaticPlacedImage>();
     var executedSteps = new List<AutomaticPlacementStep>();
