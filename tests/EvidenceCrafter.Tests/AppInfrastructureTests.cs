@@ -51,6 +51,7 @@ public sealed class AppInfrastructureTests
       AlwaysOnTop = true,
       DarkMode = true,
       ThemeColorArgb = Color.FromArgb(48, 96, 160).ToArgb(),
+      CustomColors = [Color.Coral.ToArgb(), Color.CadetBlue.ToArgb()],
       WindowOpacityPercent = 3,
     });
 
@@ -62,6 +63,9 @@ public sealed class AppInfrastructureTests
     Assert.IsTrue(loaded.DarkMode);
     Assert.AreEqual(100, loaded.EffectiveThemeIntensity);
     Assert.AreEqual(Color.FromArgb(48, 96, 160).ToArgb(), loaded.EffectiveThemeColor.ToArgb());
+    CollectionAssert.AreEqual(
+      new[] { Color.Coral.ToArgb(), Color.CadetBlue.ToArgb() },
+      loaded.CustomColors);
     Assert.AreEqual(50, loaded.EffectiveWindowOpacityPercent);
     Assert.AreEqual(100, new EvidenceCrafterSettings().EffectiveWindowOpacityPercent);
     var savedJson = File.ReadAllText(path);
@@ -81,6 +85,18 @@ public sealed class AppInfrastructureTests
     var loaded = store.Load();
     Assert.AreEqual(35, loaded.EffectiveThemeIntensity);
     Assert.IsFalse(loaded.DarkMode);
+  }
+
+  [TestMethod]
+  public void SettingsStore_LimitsCustomPaletteToWindowsDialogCapacity()
+  {
+    using var directory = new TemporaryDirectory();
+    var path = Path.Combine(directory.Path, "settings.json");
+    var store = new AppSettingsStore(path);
+
+    store.Save(new EvidenceCrafterSettings { CustomColors = Enumerable.Range(1, 20).ToArray() });
+
+    CollectionAssert.AreEqual(Enumerable.Range(1, 16).ToArray(), store.Load().CustomColors);
   }
 
   [TestMethod]

@@ -24,6 +24,9 @@ internal sealed record EvidenceCrafterSettings
   // Kept nullable so settings files written before custom colors retain the original dark theme.
   public int? ThemeColorArgb { get; init; }
 
+  // Windows' color dialog exposes up to 16 user-created palette entries.
+  public int[] CustomColors { get; init; } = [];
+
   // Null keeps settings files written before window transparency fully opaque.
   public int? WindowOpacityPercent { get; init; }
 
@@ -51,6 +54,7 @@ internal sealed record EvidenceCrafterSettings
       : DefaultHorizontalMarginPoints,
     ThemeIntensity = EffectiveThemeIntensity,
     ThemeColorArgb = EffectiveThemeColor.ToArgb(),
+    CustomColors = (CustomColors ?? []).Take(16).ToArray(),
     WindowOpacityPercent = EffectiveWindowOpacityPercent,
     DarkMode = EffectiveThemeIntensity >= 50,
   };

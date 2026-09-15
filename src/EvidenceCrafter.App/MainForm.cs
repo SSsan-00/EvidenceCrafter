@@ -237,12 +237,22 @@ public sealed class MainForm : Form
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
     var title = new Label
     {
-      AutoSize = true,
+      AutoSize = false,
       Text = "EvidenceCrafter",
       Font = new Font("Meiryo UI", 15F, FontStyle.Bold),
       Anchor = AnchorStyles.Left,
       Margin = new Padding(7, 2, 0, 8),
+      AutoEllipsis = true,
+      TextAlign = ContentAlignment.MiddleLeft,
+      UseCompatibleTextRendering = false,
     };
+    var titleSize = TextRenderer.MeasureText(
+      title.Text,
+      title.Font,
+      Size.Empty,
+      TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+    title.Size = new Size(titleSize.Width + 8, Math.Max(32, titleSize.Height + 4));
+    title.MinimumSize = title.Size;
     UiTheme.StyleText(title);
     header.Controls.Add(title, 0, 0);
     var themePanel = new FlowLayoutPanel
@@ -485,19 +495,19 @@ public sealed class MainForm : Form
 
     Controls.Add(layout);
     UpdateSideButtonColors();
-    EnsureResponsiveLayout(layout);
+    EnsureResponsiveLayout(layout, header);
     Shown += async (_, _) =>
     {
-      EnsureResponsiveLayout(layout);
+      EnsureResponsiveLayout(layout, header);
       await RefreshWorkbooksAsync();
     };
     DpiChanged += (_, _) =>
     {
-      if (CanUpdateUi) BeginInvoke(() => EnsureResponsiveLayout(layout));
+      if (CanUpdateUi) BeginInvoke(() => EnsureResponsiveLayout(layout, header));
     };
   }
 
-  private void EnsureResponsiveLayout(TableLayoutPanel layout)
+  private void EnsureResponsiveLayout(TableLayoutPanel layout, TableLayoutPanel header)
   {
     if (IsDisposed || Disposing) return;
 
@@ -505,8 +515,12 @@ public sealed class MainForm : Form
     // Measure the minimum content size, not an unconstrained, stretched layout.
     // Percent-width children must not turn the expanded window into its new minimum.
     var preferred = layout.GetPreferredSize(new Size(1, 1));
+    // Sum the natural child widths so an expanded Percent column never becomes the new minimum.
+    var headerWidth = header.Controls.Cast<Control>()
+      .Sum(control => control.GetPreferredSize(Size.Empty).Width + control.Margin.Horizontal) +
+      header.Padding.Horizontal + layout.Padding.Horizontal;
     var requiredClientSize = new Size(
-      Math.Max(760, preferred.Width),
+      Math.Max(760, Math.Max(preferred.Width, headerWidth)),
       Math.Max(370, preferred.Height));
     MinimumSize = SizeFromClientSize(requiredClientSize);
     if (ClientSize.Width < requiredClientSize.Width || ClientSize.Height < requiredClientSize.Height)
@@ -1419,9 +1433,11 @@ public sealed class MainForm : Form
       }
       else if (previewResult == DialogResult.Retry && workbook is not null)
       {
-        using var editor = new ImageEditorDialog(image);
+        using var editor = new ImageEditorDialog(image, settings.CustomColors);
         editor.TopMost = TopMost;
-        if (editor.ShowDialog(this) == DialogResult.OK)
+        var editorResult = editor.ShowDialog(this);
+        SaveCustomColors(editor.CustomColors);
+        if (editorResult == DialogResult.OK)
         {
           using var editedImage = editor.GetEditedImage();
           await PlaceClipboardImageAutomaticallyAsync(
@@ -1910,8 +1926,10 @@ public sealed class MainForm : Form
         return;
       }
 
-      using var editor = new ImageEditorDialog(clipboardImage) { TopMost = TopMost };
-      if (editor.ShowDialog(this) != DialogResult.OK)
+      using var editor = new ImageEditorDialog(clipboardImage, settings.CustomColors) { TopMost = TopMost };
+      var editorResult = editor.ShowDialog(this);
+      SaveCustomColors(editor.CustomColors);
+      if (editorResult != DialogResult.OK)
       {
         SetStatus("画像の差し替えをキャンセルしました。");
         return;
@@ -2958,12 +2976,21 @@ public sealed class MainForm : Form
       Color = settings.EffectiveThemeColor,
       FullOpen = true,
       AnyColor = true,
+      CustomColors = settings.CustomColors.ToArray(),
     };
-    if (dialog.ShowDialog(this) != DialogResult.OK) return;
+    var result = dialog.ShowDialog(this);
+    SaveCustomColors(dialog.CustomColors);
+    if (result != DialogResult.OK) return;
 
     UiTheme.SetThemeColor(dialog.Color);
     settings = settings with { ThemeColorArgb = dialog.Color.ToArgb() };
     RefreshThemeUi();
+  }
+
+  private void SaveCustomColors(int[] customColors)
+  {
+    settings = settings with { CustomColors = customColors.Take(16).ToArray() };
+    QueueSettingsSave();
   }
 
   private void RefreshThemeUi()

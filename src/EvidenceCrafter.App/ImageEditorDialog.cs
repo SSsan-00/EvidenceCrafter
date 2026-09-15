@@ -12,10 +12,12 @@ internal sealed class ImageEditorDialog : Form
   private readonly ToolStripButton resetButton;
   private readonly ThemeColorPickerButton colorButton;
   private readonly ToolStripStatusLabel statusLabel;
+  private int[] customColors;
   private bool confirmed;
 
-  public ImageEditorDialog(Image image)
+  public ImageEditorDialog(Image image, int[]? customColors = null)
   {
+    this.customColors = customColors?.Take(16).ToArray() ?? [];
     document = new ImageEditDocument(image);
     Text = "画像編集";
     StartPosition = FormStartPosition.CenterParent;
@@ -155,6 +157,8 @@ internal sealed class ImageEditorDialog : Form
 
   public Bitmap GetEditedImage() => document.GetImageCopy();
 
+  public int[] CustomColors => customColors.ToArray();
+
   protected override bool ProcessCmdKey(ref Message message, Keys keyData)
   {
     if (keyData == Keys.Enter)
@@ -246,8 +250,11 @@ internal sealed class ImageEditorDialog : Form
       Color = canvas.DrawingColor,
       FullOpen = true,
       AnyColor = true,
+      CustomColors = customColors.ToArray(),
     };
-    if (dialog.ShowDialog(this) != DialogResult.OK)
+    var result = dialog.ShowDialog(this);
+    customColors = dialog.CustomColors.Take(16).ToArray();
+    if (result != DialogResult.OK)
     {
       return;
     }
