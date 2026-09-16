@@ -158,6 +158,35 @@ internal static class UiTheme
     foreach (Control child in root.Controls) Refresh(child);
   }
 
+  /// <summary>Lets the main-window backdrop show through every themed background surface.</summary>
+  internal static void ApplyRainbowBackground(Control root, bool enabled)
+  {
+    if (roles.TryGetValue(root, out var holder))
+    {
+      if (!enabled)
+      {
+        Apply(root, holder.Value);
+      }
+      else
+      {
+        switch (holder.Value)
+        {
+          case Role.Canvas:
+          case Role.Surface:
+          case Role.MutedSurface:
+            root.BackColor = Color.Transparent;
+            break;
+          case Role.Text:
+          case Role.MutedText:
+            root.ForeColor = Color.Black;
+            break;
+        }
+      }
+      root.Invalidate();
+    }
+    foreach (Control child in root.Controls) ApplyRainbowBackground(child, enabled);
+  }
+
   private static void SetRole(Control control, Role role)
   {
     roles.Remove(control);
@@ -323,7 +352,8 @@ internal sealed class RainbowBackdrop : Panel
   internal void AdvanceAnimation()
   {
     if (mode != RainbowBackgroundMode.Animated || !Visible) return;
-    hueOffset = (hueOffset + 0.8f) % 360;
+    // Advance 90 degrees per second so the motion remains clear at a glance.
+    hueOffset = (hueOffset + 3f) % 360;
     Invalidate();
   }
 

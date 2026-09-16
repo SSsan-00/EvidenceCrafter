@@ -53,7 +53,6 @@ public sealed class MainForm : Form
   private readonly System.Windows.Forms.Timer clipboardRetryTimer = new();
   private readonly System.Windows.Forms.Timer selectionChangeTimer = new() { Interval = 250 };
   private readonly RainbowBackdrop rainbowBackdrop = new();
-  private readonly List<Control> rainbowCanvasControls = [];
   private bool clipboardListenerRegistered;
   private string? clipboardWarning;
   private uint? lastClipboardSequenceNumber;
@@ -232,7 +231,6 @@ public sealed class MainForm : Form
       AutoScroll = false,
     };
     UiTheme.StyleCanvas(layout);
-    rainbowCanvasControls.Add(layout);
     layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
     for (var row = 0; row < 5; row++)
     {
@@ -241,7 +239,6 @@ public sealed class MainForm : Form
 
     var header = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 3 };
     UiTheme.StyleCanvas(header);
-    rainbowCanvasControls.Add(header);
     // Keep the product name at its measured width; a Percent column can collapse it
     // when the theme controls consume the minimum window width.
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -265,7 +262,6 @@ public sealed class MainForm : Form
     title.Size = new Size(titleSize.Width + 8, Math.Max(32, titleSize.Height + 4));
     title.MinimumSize = title.Size;
     UiTheme.StyleText(title);
-    rainbowCanvasControls.Add(title);
     header.Controls.Add(title, 0, 0);
     var themePanel = new FlowLayoutPanel
     {
@@ -277,7 +273,6 @@ public sealed class MainForm : Form
       Padding = new Padding(0, 2, 0, 0),
     };
     UiTheme.StyleCanvas(themePanel);
-    rainbowCanvasControls.Add(themePanel);
     var transparentLabel = CreateThemeLabel("◌", "透過が強い", ContentAlignment.MiddleRight);
     var opaqueLabel = CreateThemeLabel("●", "不透明", ContentAlignment.MiddleLeft);
     var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ", ContentAlignment.MiddleRight);
@@ -343,7 +338,6 @@ public sealed class MainForm : Form
       { SetStatus($"最前面設定を保存できません: {exception.Message}"); }
     };
     UiTheme.StyleText(topmost);
-    rainbowCanvasControls.Add(topmost);
     header.Controls.Add(topmost, 2, 0);
     layout.Controls.Add(header, 0, 0);
 
@@ -3064,13 +3058,7 @@ public sealed class MainForm : Form
     rainbowBackdrop.BaseColor = UiTheme.Canvas;
     rainbowBackdrop.Mode = rainbowBackgroundMode;
     rainbowAnimationTimer.Enabled = rainbowBackgroundMode == RainbowBackgroundMode.Animated && Visible;
-    foreach (var control in rainbowCanvasControls)
-    {
-      control.BackColor = rainbowBackgroundMode == RainbowBackgroundMode.None
-        ? UiTheme.Canvas
-        : Color.Transparent;
-      control.Invalidate();
-    }
+    UiTheme.ApplyRainbowBackground(this, rainbowBackgroundMode != RainbowBackgroundMode.None);
     rainbowBackdrop.Invalidate();
   }
 

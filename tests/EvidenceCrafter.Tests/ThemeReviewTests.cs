@@ -105,6 +105,26 @@ public sealed class ThemeReviewTests
     Assert.AreNotEqual(firstAnimatedImage.GetPixel(120, 40).ToArgb(), nextAnimatedImage.GetPixel(120, 40).ToArgb());
   });
 
+  [TestMethod]
+  public void RainbowBackground_ReachesTheSameCanvasAndSurfaceAreasAsTheTheme() => OnSta(() =>
+  {
+    using var form = new Form();
+    using var card = new Panel();
+    using var label = new Label();
+    UiTheme.StyleForm(form);
+    UiTheme.StyleSurface(card);
+    UiTheme.StyleText(label);
+    form.Controls.Add(card);
+    card.Controls.Add(label);
+
+    UiTheme.ApplyRainbowBackground(form, enabled: true);
+    Assert.AreEqual(Color.Transparent.ToArgb(), card.BackColor.ToArgb());
+    Assert.AreEqual(Color.Black.ToArgb(), label.ForeColor.ToArgb());
+
+    UiTheme.ApplyRainbowBackground(form, enabled: false);
+    Assert.AreEqual(UiTheme.Surface.ToArgb(), card.BackColor.ToArgb());
+  });
+
   private static double Contrast(Color first, Color second)
   {
     static double Luminance(Color color)
