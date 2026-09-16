@@ -514,7 +514,7 @@ public sealed class MainForm : Form
       await RefreshWorkbooksAsync();
     };
     VisibleChanged += (_, _) =>
-      rainbowAnimationTimer.Enabled = rainbowBackgroundMode == RainbowBackgroundMode.Animated && Visible;
+      rainbowAnimationTimer.Enabled = (rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated) && Visible;
     DpiChanged += (_, _) =>
     {
       if (CanUpdateUi) BeginInvoke(() => EnsureResponsiveLayout(layout, header));
@@ -1518,6 +1518,11 @@ public sealed class MainForm : Form
     if (keyData is (Keys.Control | Keys.Shift | Keys.D7) or (Keys.Control | Keys.Shift | Keys.NumPad7))
     {
       ToggleRainbowBackground(RainbowBackgroundMode.Animated);
+      return true;
+    }
+    if ((keyData is (Keys.Shift | Keys.D7) or (Keys.Shift | Keys.NumPad7)) && !EnterShortcut.IsEditingInput(this))
+    {
+      ToggleRainbowBackground(RainbowBackgroundMode.ThemeAnimated);
       return true;
     }
     if (keyData == (Keys.Control | Keys.Z))
@@ -3049,6 +3054,7 @@ public sealed class MainForm : Form
     {
       RainbowBackgroundMode.Static => "レインボー背景を設定しました。Ctrl+7で通常背景に戻せます。",
       RainbowBackgroundMode.Animated => "アニメーション付きレインボー背景を設定しました。Ctrl+Shift+7で通常背景に戻せます。",
+      RainbowBackgroundMode.ThemeAnimated => "選択色のアニメーション背景を設定しました。Shift+7で通常背景に戻せます。",
       _ => "通常背景に戻しました。",
     });
   }
@@ -3056,8 +3062,9 @@ public sealed class MainForm : Form
   private void ApplyRainbowBackground()
   {
     rainbowBackdrop.BaseColor = UiTheme.Canvas;
+    rainbowBackdrop.ThemeColor = UiTheme.ThemeColor;
     rainbowBackdrop.Mode = rainbowBackgroundMode;
-    rainbowAnimationTimer.Enabled = rainbowBackgroundMode == RainbowBackgroundMode.Animated && Visible;
+    rainbowAnimationTimer.Enabled = (rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated) && Visible;
     UiTheme.ApplyRainbowBackground(this, rainbowBackgroundMode != RainbowBackgroundMode.None);
     rainbowBackdrop.Invalidate();
   }

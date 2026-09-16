@@ -319,7 +319,7 @@ internal sealed class SingleLineLabel : Label
   }
 }
 
-internal enum RainbowBackgroundMode { None, Static, Animated }
+internal enum RainbowBackgroundMode { None, Static, Animated, ThemeAnimated }
 
 /// <summary>Paints the main window's optional rainbow canvas without recoloring its controls.</summary>
 internal sealed class RainbowBackdrop : Panel
@@ -337,6 +337,9 @@ internal sealed class RainbowBackdrop : Panel
   internal Color BaseColor { get; set; } = Color.White;
 
   [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+  internal Color ThemeColor { get; set; } = Color.FromArgb(EvidenceCrafterSettings.DefaultThemeColorArgb);
+
+  [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
   internal RainbowBackgroundMode Mode
   {
     get => mode;
@@ -344,14 +347,14 @@ internal sealed class RainbowBackdrop : Panel
     {
       if (mode == value) return;
       mode = value;
-      if (mode != RainbowBackgroundMode.Animated) hueOffset = 0;
+      if (mode is not (RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated)) hueOffset = 0;
       Invalidate();
     }
   }
 
   internal void AdvanceAnimation()
   {
-    if (mode != RainbowBackgroundMode.Animated || !Visible) return;
+    if (mode is not (RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated) || !Visible) return;
     // Advance 90 degrees per second so the motion remains clear at a glance.
     hueOffset = (hueOffset + 3f) % 360;
     Invalidate();
@@ -366,9 +369,9 @@ internal sealed class RainbowBackdrop : Panel
     }
 
     var bounds = ClientRectangle;
-    var colors = Enumerable.Range(0, 8)
-      .Select(index => PastelColor(hueOffset + index * (360f / 7)))
-      .ToArray();
+    var colors = mode == RainbowBackgroundMode.ThemeAnimated
+      ? Enumerable.Range(0, 8).Select(ThemeGradientColor).ToArray()
+      : Enumerable.Range(0, 8).Select(index => PastelColor(hueOffset + index * (360f / 7))).ToArray();
     using var brush = new LinearGradientBrush(bounds, colors[0], colors[^1], LinearGradientMode.ForwardDiagonal)
     {
       InterpolationColors = new ColorBlend
@@ -401,6 +404,16 @@ internal sealed class RainbowBackdrop : Panel
       (int)Math.Round((whiteMix + red * (1 - whiteMix)) * 255),
       (int)Math.Round((whiteMix + green * (1 - whiteMix)) * 255),
       (int)Math.Round((whiteMix + blue * (1 - whiteMix)) * 255));
+  }
+
+  private Color ThemeGradientColor(int index)
+  {
+    var wave = (Math.Sin((hueOffset + index * (360f / 7)) * Math.PI / 180) + 1) / 2;
+    var whiteMix = 0.55 + wave * 0.32;
+    return Color.FromArgb(
+      (int)Math.Round(ThemeColor.R + (255 - ThemeColor.R) * whiteMix),
+      (int)Math.Round(ThemeColor.G + (255 - ThemeColor.G) * whiteMix),
+      (int)Math.Round(ThemeColor.B + (255 - ThemeColor.B) * whiteMix));
   }
 }
 

@@ -106,6 +106,28 @@ public sealed class ThemeReviewTests
   });
 
   [TestMethod]
+  public void ThemeAnimatedBackdrop_UsesTheSelectedColorAndAnimates() => OnSta(() =>
+  {
+    using var backdrop = new RainbowBackdrop { Size = new Size(240, 80), BaseColor = Color.White, Mode = RainbowBackgroundMode.ThemeAnimated };
+    using var redImage = new Bitmap(backdrop.Width, backdrop.Height);
+    backdrop.ThemeColor = Color.Red;
+    backdrop.DrawToBitmap(redImage, backdrop.ClientRectangle);
+
+    using var blueImage = new Bitmap(backdrop.Width, backdrop.Height);
+    backdrop.ThemeColor = Color.Blue;
+    backdrop.DrawToBitmap(blueImage, backdrop.ClientRectangle);
+    var redPixel = redImage.GetPixel(120, 40);
+    var bluePixel = blueImage.GetPixel(120, 40);
+    Assert.IsGreaterThan(redPixel.B, redPixel.R);
+    Assert.IsGreaterThan(bluePixel.R, bluePixel.B);
+
+    backdrop.AdvanceAnimation();
+    using var animatedImage = new Bitmap(backdrop.Width, backdrop.Height);
+    backdrop.DrawToBitmap(animatedImage, backdrop.ClientRectangle);
+    Assert.AreNotEqual(blueImage.GetPixel(120, 40).ToArgb(), animatedImage.GetPixel(120, 40).ToArgb());
+  });
+
+  [TestMethod]
   public void RainbowBackground_ReachesTheSameCanvasAndSurfaceAreasAsTheTheme() => OnSta(() =>
   {
     using var form = new Form();
