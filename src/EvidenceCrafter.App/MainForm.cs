@@ -49,8 +49,11 @@ public sealed class MainForm : Form
   private readonly ThemeGradientSlider themeSlider = new();
   private readonly ThemeColorPickerButton themeColorButton = new();
   private readonly System.Windows.Forms.Timer themeSaveTimer = new() { Interval = 300 };
+  private readonly System.Windows.Forms.Timer rainbowAnimationTimer = new() { Interval = 33 };
   private readonly System.Windows.Forms.Timer clipboardRetryTimer = new();
   private readonly System.Windows.Forms.Timer selectionChangeTimer = new() { Interval = 250 };
+  private readonly RainbowBackdrop rainbowBackdrop = new();
+  private readonly List<Control> rainbowCanvasControls = [];
   private bool clipboardListenerRegistered;
   private string? clipboardWarning;
   private uint? lastClipboardSequenceNumber;
@@ -81,6 +84,7 @@ public sealed class MainForm : Form
   private ExcelSelectionChangedEventArgs? latestSelectionChange;
   private AutomaticPlacementAnalysisResult? cachedPlacementContext;
   private string? worksheetChoicesWorkbookId;
+  private RainbowBackgroundMode rainbowBackgroundMode;
 
   private bool CanUpdateUi =>
     IsHandleCreated &&
@@ -115,6 +119,7 @@ public sealed class MainForm : Form
       themeSaveTimer.Stop();
       SaveThemeSettings();
     };
+    rainbowAnimationTimer.Tick += (_, _) => rainbowBackdrop.AdvanceAnimation();
     sessionMonitor.SelectionChanged += SessionMonitorSelectionChanged;
     InitializeUi();
   }
@@ -165,6 +170,7 @@ public sealed class MainForm : Form
       ClearHistoryStack(redoHistory);
       sessionMonitor.Dispose();
       themeSaveTimer.Dispose();
+      rainbowAnimationTimer.Dispose();
       clipboardRetryTimer.Dispose();
       selectionChangeTimer.Dispose();
       try
@@ -214,6 +220,8 @@ public sealed class MainForm : Form
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
     Opacity = EvidenceCrafterSettings.DefaultWindowOpacityPercent / 100d;
+    rainbowBackdrop.Dock = DockStyle.Fill;
+    rainbowBackdrop.BaseColor = UiTheme.Canvas;
 
     var layout = new TableLayoutPanel
     {
@@ -224,6 +232,7 @@ public sealed class MainForm : Form
       AutoScroll = false,
     };
     UiTheme.StyleCanvas(layout);
+    rainbowCanvasControls.Add(layout);
     layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
     for (var row = 0; row < 5; row++)
     {
@@ -232,6 +241,7 @@ public sealed class MainForm : Form
 
     var header = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 3 };
     UiTheme.StyleCanvas(header);
+    rainbowCanvasControls.Add(header);
     // Keep the product name at its measured width; a Percent column can collapse it
     // when the theme controls consume the minimum window width.
     header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -255,6 +265,7 @@ public sealed class MainForm : Form
     title.Size = new Size(titleSize.Width + 8, Math.Max(32, titleSize.Height + 4));
     title.MinimumSize = title.Size;
     UiTheme.StyleText(title);
+    rainbowCanvasControls.Add(title);
     header.Controls.Add(title, 0, 0);
     var themePanel = new FlowLayoutPanel
     {
@@ -266,6 +277,7 @@ public sealed class MainForm : Form
       Padding = new Padding(0, 2, 0, 0),
     };
     UiTheme.StyleCanvas(themePanel);
+    rainbowCanvasControls.Add(themePanel);
     var transparentLabel = CreateThemeLabel("◌", "透過が強い", ContentAlignment.MiddleRight);
     var opaqueLabel = CreateThemeLabel("●", "不透明", ContentAlignment.MiddleLeft);
     var lightThemeLabel = CreateThemeLabel("☀", "ライトテーマ", ContentAlignment.MiddleRight);
@@ -331,6 +343,7 @@ public sealed class MainForm : Form
       { SetStatus($"最前面設定を保存できません: {exception.Message}"); }
     };
     UiTheme.StyleText(topmost);
+    rainbowCanvasControls.Add(topmost);
     header.Controls.Add(topmost, 2, 0);
     layout.Controls.Add(header, 0, 0);
 
@@ -496,7 +509,9 @@ public sealed class MainForm : Form
     statusPanel.Controls.Add(statusLabel);
     layout.Controls.Add(statusPanel, 0, 4);
 
-    Controls.Add(layout);
+    rainbowBackdrop.Controls.Add(layout);
+    Controls.Add(rainbowBackdrop);
+    ApplyRainbowBackground();
     UpdateSideButtonColors();
     EnsureResponsiveLayout(layout, header);
     Shown += async (_, _) =>
@@ -504,6 +519,8 @@ public sealed class MainForm : Form
       EnsureResponsiveLayout(layout, header);
       await RefreshWorkbooksAsync();
     };
+    VisibleChanged += (_, _) =>
+      rainbowAnimationTimer.Enabled = rainbowBackgroundMode == RainbowBackgroundMode.Animated && Visible;
     DpiChanged += (_, _) =>
     {
       if (CanUpdateUi) BeginInvoke(() => EnsureResponsiveLayout(layout, header));
@@ -1311,7 +1328,7 @@ public sealed class MainForm : Form
     }
   }
 
-  private async Task CaptureScreenAsync()
+  private async Task CaptureScreenAsync(bool suppressAdvanceAfterPlacement = false)
   {
     if (screenCaptureInProgress || clipboardPreviewOpen || imageWorkflow.IsActive ||
       Volatile.Read(ref mutationInProgress) != 0 || IsDisposed || Disposing)
@@ -1337,7 +1354,7 @@ public sealed class MainForm : Form
       using var image = capture.TakeCapturedImage();
       Show();
       Activate();
-      await ShowImagePreviewAsync(image, "キャプチャ");
+      await ShowImagePreviewAsync(image, "キャプチャ", suppressAdvanceAfterPlacement: suppressAdvanceAfterPlacement);
     }
     catch (Exception exception) when (exception is ExternalException or InvalidOperationException)
     {
@@ -1362,7 +1379,11 @@ public sealed class MainForm : Form
     }
   }
 
-  private async Task ShowImagePreviewAsync(Image image, string sourceLabel, MemoryStream? encodedImage = null)
+  private async Task ShowImagePreviewAsync(
+    Image image,
+    string sourceLabel,
+    MemoryStream? encodedImage = null,
+    bool suppressAdvanceAfterPlacement = false)
   {
     var workbook = workbookSelector.SelectedItem as WorkbookIdentity;
     var worksheetName = string.IsNullOrWhiteSpace(worksheetNameBox.Text)
@@ -1431,7 +1452,8 @@ public sealed class MainForm : Form
       if (previewResult == DialogResult.Yes && workbook is not null)
       {
         await PlaceClipboardImageAutomaticallyAsync(
-          workbook, analysis.WorksheetName, analysis.ResolvedSide, image, analysis.CaseLabel, imagePath, analysis);
+          workbook, analysis.WorksheetName, analysis.ResolvedSide, image, analysis.CaseLabel, imagePath, analysis,
+          suppressAdvanceAfterPlacement: suppressAdvanceAfterPlacement);
         imagePath = string.Empty;
       }
       else if (previewResult == DialogResult.Retry && workbook is not null)
@@ -1444,7 +1466,8 @@ public sealed class MainForm : Form
         {
           using var editedImage = editor.GetEditedImage();
           await PlaceClipboardImageAutomaticallyAsync(
-            workbook, analysis!.WorksheetName, analysis.ResolvedSide, editedImage, analysis.CaseLabel);
+            workbook, analysis!.WorksheetName, analysis.ResolvedSide, editedImage, analysis.CaseLabel,
+            suppressAdvanceAfterPlacement: suppressAdvanceAfterPlacement);
         }
         else
         {
@@ -1483,9 +1506,24 @@ public sealed class MainForm : Form
 
   protected override bool ProcessCmdKey(ref Message message, Keys keyData)
   {
+    if (keyData == (Keys.Shift | Keys.Enter) && !EnterShortcut.IsEditingInput(this))
+    {
+      if (!EnterShortcut.IsRepeat(message) && ValidateChildren()) _ = CaptureScreenAsync(suppressAdvanceAfterPlacement: true);
+      return true;
+    }
     if (keyData == Keys.Enter && !EnterShortcut.IsEditingInput(this))
     {
       if (!EnterShortcut.IsRepeat(message) && ValidateChildren()) _ = CaptureScreenAsync();
+      return true;
+    }
+    if (keyData is (Keys.Control | Keys.D7) or (Keys.Control | Keys.NumPad7))
+    {
+      ToggleRainbowBackground(RainbowBackgroundMode.Static);
+      return true;
+    }
+    if (keyData is (Keys.Control | Keys.Shift | Keys.D7) or (Keys.Control | Keys.Shift | Keys.NumPad7))
+    {
+      ToggleRainbowBackground(RainbowBackgroundMode.Animated);
       return true;
     }
     if (keyData == (Keys.Control | Keys.Z))
@@ -1516,7 +1554,8 @@ public sealed class MainForm : Form
     Image image,
     string? requestedCaseLabel = null,
     string? preparedImagePath = null,
-    AutomaticPlacementAnalysisResult? preparedAnalysis = null)
+    AutomaticPlacementAnalysisResult? preparedAnalysis = null,
+    bool suppressAdvanceAfterPlacement = false)
   {
     if (!TryBeginMutation())
     {
@@ -1581,7 +1620,7 @@ public sealed class MainForm : Form
         DiagnosticOutcome.Succeeded,
         checked((int)workbook.ProcessId),
         result.PlacedImages.Count);
-      var advanced = await AdvanceAfterPlacementAsync(
+      var advanced = !suppressAdvanceAfterPlacement && await AdvanceAfterPlacementAsync(
         workbook,
         result.PlacedImages[^1].WorksheetName,
         result.Analysis?.CaseLabel ?? caseLabelBox.Text,
@@ -3004,7 +3043,35 @@ public sealed class MainForm : Form
     themeSlider.BackColor = UiTheme.Canvas;
     themeSlider.Invalidate();
     UpdateSideButtonColors();
+    ApplyRainbowBackground();
     QueueSettingsSave();
+  }
+
+  private void ToggleRainbowBackground(RainbowBackgroundMode mode)
+  {
+    rainbowBackgroundMode = rainbowBackgroundMode == mode ? RainbowBackgroundMode.None : mode;
+    ApplyRainbowBackground();
+    SetStatus(rainbowBackgroundMode switch
+    {
+      RainbowBackgroundMode.Static => "レインボー背景を設定しました。Ctrl+7で通常背景に戻せます。",
+      RainbowBackgroundMode.Animated => "アニメーション付きレインボー背景を設定しました。Ctrl+Shift+7で通常背景に戻せます。",
+      _ => "通常背景に戻しました。",
+    });
+  }
+
+  private void ApplyRainbowBackground()
+  {
+    rainbowBackdrop.BaseColor = UiTheme.Canvas;
+    rainbowBackdrop.Mode = rainbowBackgroundMode;
+    rainbowAnimationTimer.Enabled = rainbowBackgroundMode == RainbowBackgroundMode.Animated && Visible;
+    foreach (var control in rainbowCanvasControls)
+    {
+      control.BackColor = rainbowBackgroundMode == RainbowBackgroundMode.None
+        ? UiTheme.Canvas
+        : Color.Transparent;
+      control.Invalidate();
+    }
+    rainbowBackdrop.Invalidate();
   }
 
   private void QueueSettingsSave()

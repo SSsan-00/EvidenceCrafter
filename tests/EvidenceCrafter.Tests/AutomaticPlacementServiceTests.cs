@@ -411,6 +411,33 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
+  public void AnalyzeSnapshot_ReanalysisKeepsTheOriginalPairedShapeAfterItsOrderChanges()
+  {
+    var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
+    {
+      // new-1 was relocated below new-2 while making room for the matching OLD image.
+      Shapes =
+      [
+        new SnapshotShape("new-2", 5, 10, 4, 10, true),
+        new SnapshotShape("new-1", 30, 35, 4, 10, true)
+        {
+          WidthPoints = 60, HeightPoints = 30, SourceDimensions = new ImageDimensions(120, 60),
+        },
+      ],
+    };
+
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.Old,
+      [new AutomaticPlacementImage("old.png", new ImageDimensions(120, 60))
+      {
+        ReferenceShapeName = "new-1",
+      }]);
+
+    Assert.IsTrue(result.Succeeded, result.Message);
+    Assert.AreEqual("new-1", result.Steps[0].Pair!.ShapeName);
+    Assert.AreEqual(30, result.Steps[0].Plan.StartRow);
+  }
+
+  [TestMethod]
   public void AnalyzeSnapshot_PairedPlacementMakesRoomForExistingCells()
   {
     var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with

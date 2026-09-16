@@ -112,6 +112,15 @@ public sealed class PlacementPlannerTests
   }
 
   [TestMethod]
+  public void Plan_PairedImageOutsideCaseFallsBackToASafeCaseBand()
+  {
+    var result = planner.Plan(CreateRequest([]) with { PreferredStartRow = Layout.EndRow + 1 });
+
+    Assert.AreEqual(PlacementMode.Tail, result.Mode);
+    Assert.AreEqual(5, result.StartRow);
+  }
+
+  [TestMethod]
   public void Plan_PairedImage_AppendsBelowOccupiedAlignedStartRow()
   {
     var request = CreateRequest(

@@ -68,9 +68,16 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
       // still prevents overwriting the CASE header or other existing content.
       if (preferredStartRow < request.Layout.StartRow || preferredStartRow > request.Layout.EndRow)
       {
-        throw new InvalidOperationException("対応する反対Side画像の開始行がCASE範囲外です。");
+        // A manually moved reference may have left its Case. Keep the new image
+        // in the current Case and let the caller relocate the matching reference
+        // to this shared free band instead of rejecting an otherwise safe placement.
+        startRow = relevantContents.Length == 0
+          ? firstPlacementRow
+          : Math.Max(firstPlacementRow, ResolveTailStart(relevantContents, request.ImageGapRows));
+        mode = PlacementMode.Tail;
+        reason = "The aligned image is outside the CASE; moved the pair to a free band.";
       }
-      if (relevantContents.Any(content => Covers(content, preferredStartRow)) ||
+      else if (relevantContents.Any(content => Covers(content, preferredStartRow)) ||
         !HasRequiredGapBefore(preferredStartRow, relevantContents, request.ImageGapRows))
       {
         // Keep existing content intact; the normal tail expansion below reserves

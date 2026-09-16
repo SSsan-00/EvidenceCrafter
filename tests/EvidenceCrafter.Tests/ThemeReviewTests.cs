@@ -87,6 +87,24 @@ public sealed class ThemeReviewTests
     Assert.IsGreaterThanOrEqualTo(expected.Width, label.GetPreferredSize(Size.Empty).Width);
   });
 
+  [TestMethod]
+  public void RainbowBackdrop_PaintsAStaticGradientAndOnlyAnimatesWhenRequested() => OnSta(() =>
+  {
+    using var backdrop = new RainbowBackdrop { Size = new Size(240, 80), BaseColor = Color.White };
+    using var staticImage = new Bitmap(backdrop.Width, backdrop.Height);
+    backdrop.Mode = RainbowBackgroundMode.Static;
+    backdrop.DrawToBitmap(staticImage, backdrop.ClientRectangle);
+    Assert.AreNotEqual(staticImage.GetPixel(5, 5).ToArgb(), staticImage.GetPixel(220, 70).ToArgb());
+
+    using var firstAnimatedImage = new Bitmap(backdrop.Width, backdrop.Height);
+    backdrop.Mode = RainbowBackgroundMode.Animated;
+    backdrop.DrawToBitmap(firstAnimatedImage, backdrop.ClientRectangle);
+    backdrop.AdvanceAnimation();
+    using var nextAnimatedImage = new Bitmap(backdrop.Width, backdrop.Height);
+    backdrop.DrawToBitmap(nextAnimatedImage, backdrop.ClientRectangle);
+    Assert.AreNotEqual(firstAnimatedImage.GetPixel(120, 40).ToArgb(), nextAnimatedImage.GetPixel(120, 40).ToArgb());
+  });
+
   private static double Contrast(Color first, Color second)
   {
     static double Luminance(Color color)

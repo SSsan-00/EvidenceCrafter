@@ -278,7 +278,7 @@ internal sealed class SingleLineLabel : Label
 
   protected override void OnPaint(PaintEventArgs eventArgs)
   {
-    eventArgs.Graphics.Clear(BackColor);
+    base.OnPaintBackground(eventArgs);
     TextRenderer.DrawText(
       eventArgs.Graphics,
       Text,
@@ -287,6 +287,90 @@ internal sealed class SingleLineLabel : Label
       ForeColor,
       TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix |
       TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+  }
+}
+
+internal enum RainbowBackgroundMode { None, Static, Animated }
+
+/// <summary>Paints the main window's optional rainbow canvas without recoloring its controls.</summary>
+internal sealed class RainbowBackdrop : Panel
+{
+  private float hueOffset;
+  private RainbowBackgroundMode mode;
+
+  internal RainbowBackdrop()
+  {
+    DoubleBuffered = true;
+    ResizeRedraw = true;
+  }
+
+  [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+  internal Color BaseColor { get; set; } = Color.White;
+
+  [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+  internal RainbowBackgroundMode Mode
+  {
+    get => mode;
+    set
+    {
+      if (mode == value) return;
+      mode = value;
+      if (mode != RainbowBackgroundMode.Animated) hueOffset = 0;
+      Invalidate();
+    }
+  }
+
+  internal void AdvanceAnimation()
+  {
+    if (mode != RainbowBackgroundMode.Animated || !Visible) return;
+    hueOffset = (hueOffset + 0.8f) % 360;
+    Invalidate();
+  }
+
+  protected override void OnPaintBackground(PaintEventArgs e)
+  {
+    if (mode == RainbowBackgroundMode.None || ClientSize.Width <= 1 || ClientSize.Height <= 1)
+    {
+      e.Graphics.Clear(BaseColor);
+      return;
+    }
+
+    var bounds = ClientRectangle;
+    var colors = Enumerable.Range(0, 8)
+      .Select(index => PastelColor(hueOffset + index * (360f / 7)))
+      .ToArray();
+    using var brush = new LinearGradientBrush(bounds, colors[0], colors[^1], LinearGradientMode.ForwardDiagonal)
+    {
+      InterpolationColors = new ColorBlend
+      {
+        Colors = colors,
+        Positions = Enumerable.Range(0, colors.Length)
+          .Select(index => index / (float)(colors.Length - 1)).ToArray(),
+      },
+    };
+    e.Graphics.FillRectangle(brush, bounds);
+  }
+
+  private static Color PastelColor(float hue)
+  {
+    hue %= 360;
+    if (hue < 0) hue += 360;
+    var chroma = 0.46;
+    var x = chroma * (1 - Math.Abs((hue / 60d) % 2 - 1));
+    var (red, green, blue) = hue switch
+    {
+      < 60 => (chroma, x, 0d),
+      < 120 => (x, chroma, 0d),
+      < 180 => (0d, chroma, x),
+      < 240 => (0d, x, chroma),
+      < 300 => (x, 0d, chroma),
+      _ => (chroma, 0d, x),
+    };
+    const double whiteMix = 0.58;
+    return Color.FromArgb(
+      (int)Math.Round((whiteMix + red * (1 - whiteMix)) * 255),
+      (int)Math.Round((whiteMix + green * (1 - whiteMix)) * 255),
+      (int)Math.Round((whiteMix + blue * (1 - whiteMix)) * 255));
   }
 }
 

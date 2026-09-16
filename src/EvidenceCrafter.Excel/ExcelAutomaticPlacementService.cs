@@ -160,16 +160,6 @@ public sealed class ExcelAutomaticPlacementService
     {
       var layout = analyzed.Layout;
       var contents = occupancyAnalyzer.Analyze(snapshot, layout).ToList();
-      // Reserve the other side's earlier and later image rows as shared bands.
-      // Only the matching ordinal may occupy the same rows as the new image.
-      if (images.Count == 1 && layout.Kind == SideLayoutKind.Both)
-      {
-        var ordinal = CaseImages(snapshot, layout, side).Length;
-        var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
-        contents.AddRange(CaseImages(snapshot, layout, opposite)
-          .Where((_, index) => index != ordinal)
-          .Select(shape => new ContentSpan(null, shape.StartRow, shape.EndRow, ContentKind.ManagedImage)));
-      }
       var rowHeights = snapshot.RowHeights.ToDictionary(pair => pair.Key, pair => pair.Value);
       var plans = new List<AutomaticPlacementStep>(images.Count);
       for (var index = 0; index < images.Count; index++)
@@ -178,7 +168,21 @@ public sealed class ExcelAutomaticPlacementService
         var width = AvailableWidth(snapshot, sideColumns, horizontalMarginPoints);
         var pair = images.Count == 1
           ? FindPair(snapshot, layout, side, images[index].Dimensions, width, horizontalMarginPoints,
-            images[index].PreserveReferenceSize) : null;
+            images[index].PreserveReferenceSize, images[index].ReferenceShapeName) : null;
+        if (images.Count == 1 && layout.Kind == SideLayoutKind.Both)
+        {
+          // Reserve every non-matching image band on the other side. When a paired
+          // image was moved during a previous pass, its stable shape name wins over
+          // its changed visual order.
+          var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
+          var ordinal = CaseImages(snapshot, layout, side).Length;
+          var matchingName = pair?.ShapeName;
+          contents.AddRange(CaseImages(snapshot, layout, opposite)
+            .Where((shape, imageIndex) => matchingName is not null
+              ? !string.Equals(shape.Name, matchingName, StringComparison.Ordinal)
+              : imageIndex != ordinal)
+            .Select(shape => new ContentSpan(null, shape.StartRow, shape.EndRow, ContentKind.ManagedImage)));
+        }
         if (pair is not null)
         {
           var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
@@ -215,7 +219,10 @@ public sealed class ExcelAutomaticPlacementService
               snapshot.Shapes.Single(shape => shape.Name == pair.ShapeName).TopPoints),
           };
         }
-        plans.Add(new AutomaticPlacementStep(index, images[index], plan, width) { Pair = pair });
+        var plannedImage = pair is null
+          ? images[index]
+          : images[index] with { ReferenceShapeName = pair.ShapeName };
+        plans.Add(new AutomaticPlacementStep(index, plannedImage, plan, width) { Pair = pair });
         ApplyPlanToModel(plan, side, ref layout, contents, rowHeights);
       }
 
@@ -709,15 +716,20 @@ public sealed class ExcelAutomaticPlacementService
   }
 
   private static PairedImagePlan? FindPair(SheetSnapshot snapshot, EvidenceCaseLayout layout,
-    EvidenceSide side, ImageDimensions image, double width, double margin, bool preserveReferenceSize = false)
+    EvidenceSide side, ImageDimensions image, double width, double margin, bool preserveReferenceSize = false,
+    string? referenceShapeName = null)
   {
     if (layout.Kind != SideLayoutKind.Both) return null;
     var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
-    var reference = CaseImages(snapshot, layout, opposite).ElementAtOrDefault(CaseImages(snapshot, layout, side).Length);
+    var region = layout.RegionFor(opposite);
+    var reference = string.IsNullOrWhiteSpace(referenceShapeName)
+      ? CaseImages(snapshot, layout, opposite).ElementAtOrDefault(CaseImages(snapshot, layout, side).Length)
+      : snapshot.Shapes.FirstOrDefault(shape => shape.IsManagedImage &&
+        string.Equals(shape.Name, referenceShapeName, StringComparison.Ordinal) &&
+        IsInsideColumns(shape, region));
     if (reference is null) return null;
     // Old snapshots without picture geometry cannot establish a safe reference scale.
     if (reference.WidthPoints <= 0 || reference.HeightPoints <= 0) return null;
-    var region = layout.RegionFor(opposite);
     var remainingWidth = Enumerable.Range(reference.StartColumn, region.LastColumn - reference.StartColumn + 1)
       .Sum(column => snapshot.ColumnWidths.GetValueOrDefault(column)) - reference.HorizontalOffsetPoints - margin;
     var referenceWidth = Math.Min(AvailableWidth(snapshot, region, margin), remainingWidth);
@@ -761,10 +773,13 @@ public sealed class ExcelAutomaticPlacementService
     var columns = layout.RegionFor(side);
     return snapshot.Shapes.Where(shape => shape.IsManagedImage &&
       shape.StartRow >= layout.StartRow && shape.EndRow <= layout.EndRow &&
-      shape.StartColumn >= columns.FirstColumn && shape.EndColumn <= columns.LastColumn)
+      IsInsideColumns(shape, columns))
       .OrderBy(shape => shape.StartRow).ThenBy(shape => shape.TopPoints)
       .ThenBy(shape => shape.Name, StringComparer.Ordinal).ToArray();
   }
+
+  private static bool IsInsideColumns(SnapshotShape shape, ColumnRange columns) =>
+    shape.StartColumn >= columns.FirstColumn && shape.EndColumn <= columns.LastColumn;
 
   private static string Fingerprint(SheetSnapshot snapshot)
   {
@@ -884,6 +899,8 @@ public sealed class ExcelAutomaticPlacementService
 public sealed record AutomaticPlacementImage(string ImagePath, ImageDimensions Dimensions)
 {
   internal bool PreserveReferenceSize { get; init; }
+  // Retains the original pair across a re-analysis after the reference image moved.
+  internal string? ReferenceShapeName { get; init; }
   public double? ScaleOverride { get; init; }
 }
 
