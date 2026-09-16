@@ -411,7 +411,7 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
-  public void AnalyzeSnapshot_PlanningFailureRecoversOnlyWhenExistingContentFits()
+  public void AnalyzeSnapshot_PairedPlacementMakesRoomForExistingCells()
   {
     var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
     {
@@ -423,13 +423,17 @@ public sealed class AutomaticPlacementServiceTests
     var images = new[] { new AutomaticPlacementImage("old.png", new ImageDimensions(120, 60)) };
     var recovered = service.AnalyzeSnapshot(snapshot, EvidenceSide.Old, images);
     Assert.IsTrue(recovered.Succeeded, recovered.Message);
-    Assert.IsTrue(recovered.Steps[0].Image.PreserveReferenceSize);
-    Assert.AreEqual(0.5, recovered.Steps[0].Plan.Image.Scale, 0.001);
+    var plan = recovered.Steps[0].Plan;
+    Assert.AreEqual(5, plan.StartRow);
+    var insertion = plan.Insertions.Single(row => row.AtRow == 12);
+    Assert.IsGreaterThan(plan.EndRow, 12 + insertion.Count);
     var blocked = service.AnalyzeSnapshot(snapshot with
     {
       Cells = [new SnapshotCell(5, 19, true, false, false, false)],
     }, EvidenceSide.Old, images);
-    Assert.IsFalse(blocked.Succeeded, "Recovery must not overwrite an occupied starting cell.");
+    Assert.IsTrue(blocked.Succeeded, blocked.Message);
+    Assert.IsGreaterThan(5, blocked.Steps[0].Plan.StartRow,
+      "An occupied starting cell must be preserved by placing below it.");
   }
 
   [TestMethod]

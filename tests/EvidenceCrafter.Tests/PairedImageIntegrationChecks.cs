@@ -6,6 +6,42 @@ namespace EvidenceCrafter.Tests;
 
 public sealed partial class ExcelSessionCatalogIntegrationTests
 {
+  private static void VerifyPairedCollision(object sheet, WorkbookIdentity identity, string imagePath)
+  {
+    SetCellValue(sheet, 2, 3, "NEW");
+    SetCellValue(sheet, 2, 18, "OLD");
+    SetCellValue(sheet, 3, 1, 1);
+    SetCellValue(sheet, 3, 2, 1);
+    SetCellValue(sheet, 53, 1, 1);
+    SetCellValue(sheet, 53, 2, 2);
+    SetRangeBorder(sheet, 3, 17, 102, 17, 10);
+    SetRangeBorder(sheet, 102, 1, 102, 32, 9);
+    using (var bitmap = new Bitmap(120, 60)) bitmap.Save(imagePath, ImageFormat.Png);
+    var service = new ExcelAutomaticPlacementService();
+    var images = new[] { new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 60)) };
+    var first = service.PlaceImages(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "1-1");
+    Assert.IsTrue(first.Succeeded, first.Message);
+    SetCellValue(sheet, 40, 19, "Preserve this cell");
+    var placed = service.PlaceImages(identity, "OtherTarget", EvidenceSide.Old,
+      [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 600))], requestedCaseLabel: "1-1");
+    Assert.IsTrue(placed.Succeeded, placed.Message);
+    Assert.AreEqual(5, placed.PlacedImages[0].FocusCell.Row);
+    var shiftedCellRow = 40 + (placed.ReferenceResize?.Insertion?.Count ?? 0);
+    Assert.IsTrue(placed.AppliedInsertions.Any(row => row.StartRow == shiftedCellRow));
+    var snapshot = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot!;
+    var picture = snapshot.Shapes.Single(shape => shape.Name == placed.PlacedImages[0].ShapeName);
+    Assert.IsTrue(snapshot.Cells.Any(cell => cell.Column == 19 && cell.Row > picture.EndRow && cell.HasValueOrFormula));
+    Assert.IsTrue(new ExcelManagedShapeService().Delete(identity, placed.PlacedImages[0].Target).Succeeded);
+    foreach (var row in placed.AppliedInsertions.Reverse())
+    {
+      var undo = new ExcelRowMutationService().DeleteRowsIfSafe(identity, row.WorksheetName, row.StartRow, row.Count);
+      Assert.IsTrue(undo.Succeeded && undo.Changed, undo.Message);
+    }
+    if (placed.ReferenceResize is { } reference) Assert.IsTrue(reference.SetApplied(identity, false).Succeeded);
+    var restored = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot!;
+    Assert.IsTrue(restored.Cells.Any(cell => cell.Row == 40 && cell.Column == 19 && cell.HasValueOrFormula));
+  }
+
   private static void VerifyPairedImageAlignment(object sheet, WorkbookIdentity identity, string imagePath)
   {
     SetCellValue(sheet, 2, 3, "NEW");

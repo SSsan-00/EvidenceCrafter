@@ -42,7 +42,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void PairedImages_AlignAfterRowGrowthAndRestoreReference() =>
     RunSupervisedScenario(Scenario.PairAlignment);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment }
+  [TestMethod]
+  public void PairedImages_MoveCellContentAndUndoInsertedRows() =>
+    RunSupervisedScenario(Scenario.PairCollision);
+
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision }
 
   private static void RunSupervisedScenario(Scenario scenario)
   {
@@ -181,6 +185,12 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       if (scenario is Scenario.ReferenceAppend or Scenario.ReferenceNavigation)
       {
         VerifyReferenceAppend(workbooks, temporaryDirectory, placementImagePath, scenario == Scenario.ReferenceNavigation);
+      }
+      else if (scenario == Scenario.PairCollision)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifyPairedCollision(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.PairAlignment)
       {

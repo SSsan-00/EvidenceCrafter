@@ -73,11 +73,18 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
       if (relevantContents.Any(content => Covers(content, preferredStartRow)) ||
         !HasRequiredGapBefore(preferredStartRow, relevantContents, request.ImageGapRows))
       {
-        throw new InvalidOperationException("対応する反対Side画像と同じ開始行には既存コンテンツがあるため配置できません。");
+        // Keep existing content intact; the normal tail expansion below reserves
+        // enough rows when the matching start is already occupied.
+        startRow = Math.Max(firstPlacementRow, ResolveTailStart(relevantContents, request.ImageGapRows));
+        mode = PlacementMode.Tail;
+        reason = "The aligned start is occupied; placed below existing content.";
       }
-      startRow = preferredStartRow;
-      mode = preferredStartRow == firstPlacementRow ? PlacementMode.CaseStart : PlacementMode.Gap;
-      reason = "Aligned with the corresponding image on the opposite side.";
+      else
+      {
+        startRow = preferredStartRow;
+        mode = preferredStartRow == firstPlacementRow ? PlacementMode.CaseStart : PlacementMode.Gap;
+        reason = "Aligned with the corresponding image on the opposite side.";
+      }
     }
     else if (request.PreferActiveGap && activeRowIsFree)
     {
@@ -124,9 +131,11 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
 
       if (insertion is not null)
       {
-        if (request.PreferredStartRow is not null && followingContents.Any(content =>
-          !IsImageLike(content) && content.StartRow <= imageEndRow))
-          throw new InvalidOperationException("対応画像の配置領域にセル内容があるため配置できません。");
+        // Inserting through an existing picture leaves that picture covering the
+        // inserted rows, so those rows cannot safely be removed by Undo.
+        if (request.PreferredStartRow is not null && caseContents.Any(content =>
+          IsImageLike(content) && content.StartRow < insertion.AtRow && content.EndRow >= insertion.AtRow))
+          return Plan(request with { PreferredStartRow = null, PreferActiveGap = false });
         insertions.Add(insertion);
       }
     }

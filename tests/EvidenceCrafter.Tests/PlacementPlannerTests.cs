@@ -112,7 +112,7 @@ public sealed class PlacementPlannerTests
   }
 
   [TestMethod]
-  public void Plan_PairedImage_RejectsOccupiedAlignedStartRow()
+  public void Plan_PairedImage_AppendsBelowOccupiedAlignedStartRow()
   {
     var request = CreateRequest(
       [new ContentSpan(EvidenceSide.New, 18, 22, ContentKind.ManagedImage)]) with
@@ -120,17 +120,45 @@ public sealed class PlacementPlannerTests
       PreferredStartRow = 20,
     };
 
-    Assert.ThrowsExactly<InvalidOperationException>(() => planner.Plan(request));
+    var result = planner.Plan(request);
+    Assert.AreEqual(25, result.StartRow);
+    Assert.AreEqual(PlacementMode.Tail, result.Mode);
   }
 
   [TestMethod]
-  public void Plan_PairedImage_RejectsContentBelowFreeStartRow()
+  public void Plan_PairedImage_InsertsRowsBeforeContentBelowFreeStartRow()
   {
     var request = CreateRequest([new ContentSpan(EvidenceSide.New, 6, 6, ContentKind.Cell)]) with
     {
       PreferredStartRow = 5,
     };
-    Assert.ThrowsExactly<InvalidOperationException>(() => planner.Plan(request));
+    var result = planner.Plan(request);
+    Assert.AreEqual(5, result.StartRow);
+    var insertion = result.Insertions.Single();
+    Assert.AreEqual(6, insertion.AtRow);
+    Assert.IsGreaterThan(result.EndRow, 6 + insertion.Count);
+  }
+
+  [TestMethod]
+  public void Plan_PairedImage_ExpandsCaseWhenOccupiedStartRequiresTailPlacement()
+  {
+    var result = planner.Plan(CreateRequest(
+      [new ContentSpan(EvidenceSide.New, 18, 50, ContentKind.ManagedImage)]) with
+      { PreferredStartRow = 20 });
+    Assert.AreEqual(53, result.StartRow);
+    var insertion = result.Insertions.Single();
+    Assert.AreEqual(53, insertion.AtRow);
+    Assert.IsGreaterThanOrEqualTo(result.EndRow + 4, Layout.EndRow + insertion.Count);
+  }
+
+  [TestMethod]
+  public void Plan_PairedImage_DoesNotInsertThroughReferencePicture()
+  {
+    var result = planner.Plan(CreateRequest([
+      new ContentSpan(EvidenceSide.Old, 5, 10, ContentKind.ManagedImage),
+      new ContentSpan(EvidenceSide.New, 6, 6, ContentKind.Cell)]) with { PreferredStartRow = 5 });
+    Assert.AreEqual(9, result.StartRow);
+    Assert.IsFalse(result.Insertions.Any(row => row.AtRow > 5 && row.AtRow <= 10));
   }
 
   [TestMethod]
