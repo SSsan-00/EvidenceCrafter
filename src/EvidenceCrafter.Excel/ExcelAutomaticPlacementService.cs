@@ -177,7 +177,8 @@ public sealed class ExcelAutomaticPlacementService
         var sideColumns = layout.RegionFor(side);
         var width = AvailableWidth(snapshot, sideColumns, horizontalMarginPoints);
         var pair = images.Count == 1
-          ? FindPair(snapshot, layout, side, images[index].Dimensions, width, horizontalMarginPoints) : null;
+          ? FindPair(snapshot, layout, side, images[index].Dimensions, width, horizontalMarginPoints,
+            images[index].PreserveReferenceSize) : null;
         var plan = placementPlanner.Plan(new PlacementRequest(
           layout,
           side,
@@ -214,6 +215,13 @@ public sealed class ExcelAutomaticPlacementService
     }
     catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or OverflowException)
     {
+      if (images.Count == 1 && !images[0].PreserveReferenceSize && images[0].ScaleOverride is null)
+      {
+        var recovered = AnalyzeSnapshot(snapshot, side,
+          [images[0] with { PreserveReferenceSize = true }], preferActiveGap, horizontalMarginPoints,
+          requestedCaseLabel, sameCaseThenNext);
+        if (recovered.Succeeded) return recovered;
+      }
       return AutomaticPlacementAnalysisResult.Failed($"配置計画を作成できません: {exception.Message}");
     }
   }
@@ -269,8 +277,9 @@ public sealed class ExcelAutomaticPlacementService
       initialAnalysis = refreshed;
     }
 
+    images = initialAnalysis.Steps.Select(step => step.Image).ToArray();
     var appliedRows = new List<AppliedRowInsertion>();
-    if (!referencePrepared && images.Count == 1 && initialAnalysis.Steps[0].Pair is not null)
+    if (!referencePrepared && images.Count == 1 && !images[0].PreserveReferenceSize && initialAnalysis.Steps[0].Pair is not null)
     {
       // Excel can be edited between Inspect and SetApplied. Re-analyze once so
       // placement uses the latest reference geometry instead of surfacing a
@@ -299,7 +308,20 @@ public sealed class ExcelAutomaticPlacementService
           if (!refreshed.Succeeded)
             return AutomaticPlacementResult.Failed(refreshed.Message, refreshed);
           initialAnalysis = refreshed;
+          images = refreshed.Steps.Select(step => step.Image).ToArray();
+          if (images[0].PreserveReferenceSize) break;
           continue;
+        }
+        if (!prepared.Succeeded && reference.CompensationSucceeded)
+        {
+          // Recovery starts with a fresh snapshot and keeps the existing reference unchanged.
+          // The regular planner still validates band spacing, contents and CASE boundaries.
+          var recovered = PlaceImages(workbook, initialAnalysis.WorksheetName, initialAnalysis.ResolvedSide,
+            [images[0] with { PreserveReferenceSize = true, ScaleOverride = null }],
+            preferActiveGap, horizontalMarginPoints, requestedCaseLabel: initialAnalysis.CaseLabel);
+          return recovered.Succeeded
+            ? recovered with { Message = recovered.Message + " 参照画像の大きさを保持して配置しました。" }
+            : recovered;
         }
         if (!prepared.Succeeded) return AutomaticPlacementResult.Failed(prepared.Message, initialAnalysis) with
         {
@@ -644,7 +666,7 @@ public sealed class ExcelAutomaticPlacementService
   }
 
   private static PairedImagePlan? FindPair(SheetSnapshot snapshot, EvidenceCaseLayout layout,
-    EvidenceSide side, ImageDimensions image, double width, double margin)
+    EvidenceSide side, ImageDimensions image, double width, double margin, bool preserveReferenceSize = false)
   {
     if (layout.Kind != SideLayoutKind.Both) return null;
     var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
@@ -657,6 +679,17 @@ public sealed class ExcelAutomaticPlacementService
       .Sum(column => snapshot.ColumnWidths.GetValueOrDefault(column)) - reference.HorizontalOffsetPoints - margin;
     var referenceWidth = Math.Min(AvailableWidth(snapshot, region, margin), remainingWidth);
     if (referenceWidth <= 0) throw new InvalidOperationException("参照画像の配置幅がありません。");
+    if (preserveReferenceSize)
+    {
+      if (reference.WidthPoints > referenceWidth + 0.05)
+        throw new InvalidOperationException("参照画像が配置範囲を超えているため整合性を確認できません。");
+      var currentScale = reference.SourceDimensions is { } original
+        ? reference.WidthPoints / original.WidthPoints
+        : reference.WidthPoints / image.WidthPoints;
+      var scale = Math.Min(currentScale, width / image.WidthPoints);
+      return new(reference.Name, scale, reference.WidthPoints, reference.HeightPoints,
+        reference.StartRow, reference.EndRow, reference.SourceDimensions is null);
+    }
     if (reference.SourceDimensions is { } source)
     {
       var scale = Math.Min(width / image.WidthPoints, referenceWidth / source.WidthPoints);
@@ -797,6 +830,7 @@ public sealed class ExcelAutomaticPlacementService
 
 public sealed record AutomaticPlacementImage(string ImagePath, ImageDimensions Dimensions)
 {
+  internal bool PreserveReferenceSize { get; init; }
   public double? ScaleOverride { get; init; }
 }
 

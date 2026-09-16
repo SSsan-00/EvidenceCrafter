@@ -49,6 +49,34 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           Assert.IsFalse(staleResize.SetApplied(identity, false).Succeeded);
           Assert.IsFalse(staleResize.CanRetryPreparation, "Undo must keep its strict expected-state check.");
           Assert.IsTrue(shapes.Resize(identity, edited.After!, original).Succeeded);
+          object? collection = null, obstacle = null;
+          try
+          {
+            collection = GetRequiredProperty(sheet, "Shapes");
+            obstacle = InvokeMethod(collection, "AddShape", 1,
+              original.LeftPoints + original.WidthPoints + 10, original.TopPoints, 8, 8)!;
+            var recovered = service.PlaceImages(identity, "OtherTarget", EvidenceSide.Old,
+              [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, height))], requestedCaseLabel: "1-1");
+            Assert.IsTrue(recovered.Succeeded, recovered.Message);
+            Assert.IsNull(recovered.ReferenceResize, "The obstacle must prevent reference enlargement and trigger recovery.");
+            var kept = shapes.Inspect(identity, "OtherTarget", original.ShapeName).Shape!;
+            Assert.AreEqual(original.WidthPoints, kept.WidthPoints, 0.05);
+            Assert.AreEqual(original.HeightPoints, kept.HeightPoints, 0.05);
+            Assert.AreEqual(original.TopPoints, recovered.PlacedImages[0].Target.TopPoints, 0.05);
+            Assert.IsTrue(shapes.Delete(identity, recovered.PlacedImages[0].Target).Succeeded);
+            foreach (var inserted in recovered.AppliedInsertions.Reverse())
+            {
+              var deleted = new ExcelRowMutationService().DeleteRowsIfSafe(identity,
+                inserted.WorksheetName, inserted.StartRow, inserted.Count);
+              Assert.IsTrue(deleted.Succeeded && deleted.Changed, deleted.Message);
+            }
+          }
+          finally
+          {
+            if (obstacle is not null) InvokeMethod(obstacle, "Delete");
+            Release(obstacle);
+            Release(collection);
+          }
         }
         continue;
       }

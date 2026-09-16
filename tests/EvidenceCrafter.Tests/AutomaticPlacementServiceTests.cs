@@ -388,6 +388,51 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
+  public void AnalyzeSnapshot_RecoveryKeepsReferenceGeometryAndBandSpacing()
+  {
+    var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
+    {
+      Shapes = [new SnapshotShape("new-1", 5, 10, 4, 10, true)
+        { WidthPoints = 60, HeightPoints = 30, SourceDimensions = new ImageDimensions(120, 60) },
+        new SnapshotShape("new-2", 15, 20, 4, 10, true)],
+    };
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.Old,
+      [new AutomaticPlacementImage("old.png", new ImageDimensions(120, 600)) { PreserveReferenceSize = true }]);
+    Assert.IsTrue(result.Succeeded, result.Message);
+    Assert.AreEqual(0.5, result.Steps[0].Plan.Image.Scale, 0.001);
+    Assert.AreEqual(60d, result.Steps[0].Pair!.Width);
+    Assert.AreEqual(30d, result.Steps[0].Pair!.Height);
+    Assert.AreEqual(5, result.Steps[0].Plan.StartRow);
+    var insertion = result.Steps[0].Plan.Insertions.Single(row => row.AtRow == 15);
+    Assert.IsGreaterThan(result.Steps[0].Plan.EndRow + 2, 15 + insertion.Count);
+    Assert.IsFalse(new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot with { IsProtected = true },
+      EvidenceSide.Old, [new AutomaticPlacementImage("old.png", new ImageDimensions(120, 600))
+        { PreserveReferenceSize = true }]).Succeeded);
+  }
+
+  [TestMethod]
+  public void AnalyzeSnapshot_PlanningFailureRecoversOnlyWhenExistingContentFits()
+  {
+    var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
+    {
+      Shapes = [new SnapshotShape("new-1", 5, 7, 4, 10, true)
+        { WidthPoints = 60, HeightPoints = 30, SourceDimensions = new ImageDimensions(120, 60) }],
+      Cells = [new SnapshotCell(12, 19, true, false, false, false)],
+    };
+    var service = new ExcelAutomaticPlacementService();
+    var images = new[] { new AutomaticPlacementImage("old.png", new ImageDimensions(120, 60)) };
+    var recovered = service.AnalyzeSnapshot(snapshot, EvidenceSide.Old, images);
+    Assert.IsTrue(recovered.Succeeded, recovered.Message);
+    Assert.IsTrue(recovered.Steps[0].Image.PreserveReferenceSize);
+    Assert.AreEqual(0.5, recovered.Steps[0].Plan.Image.Scale, 0.001);
+    var blocked = service.AnalyzeSnapshot(snapshot with
+    {
+      Cells = [new SnapshotCell(5, 19, true, false, false, false)],
+    }, EvidenceSide.Old, images);
+    Assert.IsFalse(blocked.Succeeded, "Recovery must not overwrite an occupied starting cell.");
+  }
+
+  [TestMethod]
   public void AnalyzeSnapshot_TallBackfillReservesRowsBeforeOppositeSecondImage()
   {
     var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 }) with
