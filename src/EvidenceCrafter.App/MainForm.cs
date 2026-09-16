@@ -1243,6 +1243,13 @@ public sealed class MainForm : Form
         return;
       }
 
+      if (NativeClipboard.IsExcelCellRangeCopy(Clipboard.GetDataObject()?.GetFormats(autoConvert: false)))
+      {
+        lastClipboardSequenceNumber = sequenceBeforeRead;
+        ResetClipboardRetry();
+        return;
+      }
+
       if (!Clipboard.ContainsImage())
       {
         var sequenceAfterRead = NativeClipboard.GetClipboardSequenceNumber();

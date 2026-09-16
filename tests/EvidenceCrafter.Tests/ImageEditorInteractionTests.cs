@@ -5,6 +5,7 @@ using EvidenceCrafter.App;
 namespace EvidenceCrafter.Tests;
 
 [TestClass]
+[DoNotParallelize]
 public sealed class ImageEditorInteractionTests
 {
   [TestMethod]
@@ -58,6 +59,31 @@ public sealed class ImageEditorInteractionTests
       "ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, arguments)!;
     Assert.IsTrue(handled);
     Assert.AreEqual(DialogResult.OK, dialog.DialogResult);
+  });
+
+  [TestMethod]
+  public void Editor_ShiftEnterAddsTextAtTheImageCenter() => OnSta(() =>
+  {
+    using var bitmap = new Bitmap(400, 200);
+    using var editor = new ImageEditorDialog(bitmap) { TopMost = true };
+    editor.Show();
+    using var timer = new System.Windows.Forms.Timer { Interval = 50 };
+    timer.Tick += (_, _) =>
+    {
+      var input = Application.OpenForms.OfType<ImageTextInputDialog>().SingleOrDefault();
+      if (input is null) return;
+      timer.Stop();
+      var field = (TextBox)typeof(ImageTextInputDialog).GetField("textBox", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(input)!;
+      field.Text = "中央テキスト";
+      typeof(ImageTextInputDialog).GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .Invoke(input, [Message.Create(input.Handle, 0x100, (nint)13, 1), Keys.Enter]);
+    };
+    timer.Start();
+    var handled = (bool)typeof(ImageEditorDialog).GetMethod("ProcessCmdKey", BindingFlags.Instance | BindingFlags.NonPublic)!
+      .Invoke(editor, [Message.Create(editor.Handle, 0x100, (nint)13, 1), Keys.Shift | Keys.Enter])!;
+    Assert.IsTrue(handled);
+    var document = (ImageEditDocument)typeof(ImageEditorDialog).GetField("document", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(editor)!;
+    Assert.IsTrue(document.TryGetTextAt(new Point(200, 100), out _));
   });
 
   [TestMethod]

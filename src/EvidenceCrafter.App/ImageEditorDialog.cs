@@ -161,6 +161,11 @@ internal sealed class ImageEditorDialog : Form
 
   protected override bool ProcessCmdKey(ref Message message, Keys keyData)
   {
+    if (keyData == (Keys.Shift | Keys.Enter))
+    {
+      AddTextAtImageCenter();
+      return true;
+    }
     if (keyData == Keys.Enter)
     {
       if (!EnterShortcut.IsRepeat(message)) AcceptButton?.PerformClick();
@@ -235,6 +240,9 @@ internal sealed class ImageEditorDialog : Form
     }
   }
 
+  private void AddTextAtImageCenter() =>
+    CanvasTextRequested(canvas, new ImageTextRequestedEventArgs(new Point(document.Width / 2, document.Height / 2)));
+
   private void DocumentChanged(object? sender, EventArgs eventArgs)
   {
     undoButton.Enabled = document.CanUndo;
@@ -287,7 +295,7 @@ internal sealed class ImageEditorDialog : Form
   {
     ImageEditorTool.Rectangle => "ドラッグした範囲へ枠を追加します。",
     ImageEditorTool.Arrow => "矢印の始点から終点までドラッグします。",
-    ImageEditorTool.Text => string.Empty,
+    ImageEditorTool.Text => "クリックした位置にテキストを追加します。Shift+Enterで中央に追加します。",
     ImageEditorTool.Mosaic => "隠したい範囲をドラッグします。",
     ImageEditorTool.Crop => "残したい範囲をドラッグしてトリミングします。",
     _ => string.Empty,
