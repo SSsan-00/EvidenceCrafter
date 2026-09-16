@@ -98,6 +98,20 @@ public sealed class PlacementPlannerTests
   }
 
   [TestMethod]
+  public void Plan_PairedImage_AllowsAnAlignedStartRowInsideTheCaseBeforeNormalInset()
+  {
+    var request = CreateRequest([]) with
+    {
+      PreferredStartRow = Layout.StartRow + 1,
+    };
+
+    var result = planner.Plan(request);
+
+    Assert.AreEqual(Layout.StartRow + 1, result.StartRow);
+    Assert.AreEqual(new CellReference(Layout.StartRow + 1, 4), result.FocusCell);
+  }
+
+  [TestMethod]
   public void Plan_PairedImage_RejectsOccupiedAlignedStartRow()
   {
     var request = CreateRequest(

@@ -63,7 +63,10 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
 
     if (request.PreferredStartRow is { } preferredStartRow)
     {
-      if (preferredStartRow < firstPlacementRow || preferredStartRow > request.Layout.EndRow)
+      // A paired image must align with its counterpart even when that image starts
+      // above the normal two-row placement inset.  The occupied-content check below
+      // still prevents overwriting the CASE header or other existing content.
+      if (preferredStartRow < request.Layout.StartRow || preferredStartRow > request.Layout.EndRow)
       {
         throw new InvalidOperationException("対応する反対Side画像の開始行がCASE範囲外です。");
       }
