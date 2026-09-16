@@ -179,10 +179,26 @@ public sealed class ExcelAutomaticPlacementService
         var pair = images.Count == 1
           ? FindPair(snapshot, layout, side, images[index].Dimensions, width, horizontalMarginPoints,
             images[index].PreserveReferenceSize) : null;
+        if (pair is not null)
+        {
+          var opposite = side == EvidenceSide.New ? EvidenceSide.Old : EvidenceSide.New;
+          contents.AddRange(contents
+            .Where(content => content.Side == opposite &&
+              !(content.Kind == ContentKind.ManagedImage &&
+                content.StartRow <= pair.StartRow && content.EndRow >= pair.EndRow))
+            .Select(content => content with { Side = null })
+            .ToArray());
+        }
+        var planningDimensions = pair is not null && pair.Scale > 0
+          ? images[index].Dimensions with
+          {
+            HeightPoints = Math.Max(images[index].Dimensions.HeightPoints, pair.Height / pair.Scale),
+          }
+          : images[index].Dimensions;
         var plan = placementPlanner.Plan(new PlacementRequest(
           layout,
           side,
-          images[index].Dimensions,
+          planningDimensions,
           width,
           index == 0 ? snapshot.ActiveCell.Row : layout.EndRow,
           index == 0 && preferActiveGap,
@@ -190,6 +206,15 @@ public sealed class ExcelAutomaticPlacementService
           rowHeights,
           ScaleOverride: images[index].ScaleOverride ?? pair?.Scale,
           PreferredStartRow: pair?.StartRow));
+        if (pair is not null && plan.StartRow != pair.StartRow)
+        {
+          pair = pair with
+          {
+            TargetStartRow = plan.StartRow,
+            TargetTopPoints = MoveTop(snapshot, pair.StartRow, plan.StartRow,
+              snapshot.Shapes.Single(shape => shape.Name == pair.ShapeName).TopPoints),
+          };
+        }
         plans.Add(new AutomaticPlacementStep(index, images[index], plan, width) { Pair = pair });
         ApplyPlanToModel(plan, side, ref layout, contents, rowHeights);
       }
@@ -279,7 +304,8 @@ public sealed class ExcelAutomaticPlacementService
 
     images = initialAnalysis.Steps.Select(step => step.Image).ToArray();
     var appliedRows = new List<AppliedRowInsertion>();
-    if (!referencePrepared && images.Count == 1 && !images[0].PreserveReferenceSize && initialAnalysis.Steps[0].Pair is not null)
+    if (!referencePrepared && images.Count == 1 && initialAnalysis.Steps[0].Pair is { } initialPair &&
+      (!images[0].PreserveReferenceSize || initialPair.TargetStartRow != initialPair.StartRow))
     {
       // Excel can be edited between Inspect and SetApplied. Re-analyze once so
       // placement uses the latest reference geometry instead of surfacing a
@@ -292,14 +318,31 @@ public sealed class ExcelAutomaticPlacementService
         if (!inspected.Succeeded || inspected.Shape is not { } before)
           return AutomaticPlacementResult.Failed(inspected.Message, initialAnalysis);
         var metadata = before.Metadata with { AppliedScale = pair.Legacy ? null : pair.Scale };
-        var desired = before with { WidthPoints = pair.Width, HeightPoints = pair.Height,
-          Metadata = metadata, AlternativeText = metadata.Serialize() };
+        if (pair.TargetStartRow != pair.StartRow)
+          metadata = metadata with { AnchorCell = new CellReference(pair.TargetStartRow, before.Metadata.AnchorCell.Column) };
+        var desired = before with
+        {
+          TopPoints = pair.TargetTopPoints ?? before.TopPoints,
+          TopLeftCell = new CellReference(pair.TargetStartRow, before.TopLeftCell.Column),
+          WidthPoints = pair.Width,
+          HeightPoints = pair.Height,
+          Metadata = metadata,
+          AlternativeText = metadata.Serialize(),
+        };
         var extra = pair.Height - before.HeightPoints;
         var count = extra > 0.05 ? checked((int)Math.Ceiling(extra / 15) + 1) : 0;
         if ((long)pair.EndRow + count > ExcelWorksheetLimits.MaximumRow)
           return AutomaticPlacementResult.Failed("必要な行数がシート上限を超えます。", initialAnalysis);
-        var reference = new PairedImageResize(before, desired, count > 0
-          ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域") : null);
+        var relocationInsertion = pair.TargetStartRow != pair.StartRow
+          ? initialAnalysis.Steps[0].Plan.Insertions.SingleOrDefault()
+          : null;
+        var referenceInsertion = relocationInsertion is not null
+          ? new AppliedRowInsertion(before.WorksheetName, relocationInsertion.AtRow,
+            relocationInsertion.Count, relocationInsertion.Reason)
+          : count > 0
+            ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域")
+            : null;
+        var reference = new PairedImageResize(before, desired, referenceInsertion);
         var prepared = reference.SetApplied(workbook, true);
         if (!prepared.Succeeded && attempt == 0 && reference.CanRetryPreparation)
         {
@@ -312,7 +355,7 @@ public sealed class ExcelAutomaticPlacementService
           if (images[0].PreserveReferenceSize) break;
           continue;
         }
-        if (!prepared.Succeeded && reference.CompensationSucceeded)
+        if (!prepared.Succeeded && reference.CompensationSucceeded && pair.TargetStartRow == pair.StartRow)
         {
           // Recovery starts with a fresh snapshot and keeps the existing reference unchanged.
           // The regular planner still validates band spacing, contents and CASE boundaries.
@@ -701,6 +744,16 @@ public sealed class ExcelAutomaticPlacementService
     return new(reference.Name, commonWidth / image.WidthPoints, commonWidth,
       reference.HeightPoints * commonWidth / reference.WidthPoints,
       reference.StartRow, reference.EndRow, true);
+  }
+
+  private static double MoveTop(SheetSnapshot snapshot, int currentRow, int targetRow, double currentTop)
+  {
+    if (currentRow == targetRow) return currentTop;
+    var first = Math.Min(currentRow, targetRow);
+    var last = Math.Max(currentRow, targetRow);
+    var distance = Enumerable.Range(first, last - first)
+      .Sum(row => snapshot.RowHeights.GetValueOrDefault(row, InsertedRowHeightPoints));
+    return targetRow > currentRow ? currentTop + distance : currentTop - distance;
   }
 
   private static SnapshotShape[] CaseImages(SheetSnapshot snapshot, EvidenceCaseLayout layout, EvidenceSide side)

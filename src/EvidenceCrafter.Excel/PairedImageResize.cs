@@ -9,7 +9,11 @@ public sealed record PairedImagePlan(
   double Height,
   int StartRow,
   int EndRow,
-  bool Legacy);
+  bool Legacy)
+{
+  public int TargetStartRow { get; init; } = StartRow;
+  public double? TargetTopPoints { get; init; }
+}
 
 /// <summary>The reference resize and its reserved rows form one reversible part of automatic placement.</summary>
 public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTarget after, AppliedRowInsertion? insertion)

@@ -434,6 +434,8 @@ public sealed class AutomaticPlacementServiceTests
     Assert.IsTrue(blocked.Succeeded, blocked.Message);
     Assert.IsGreaterThan(5, blocked.Steps[0].Plan.StartRow,
       "An occupied starting cell must be preserved by placing below it.");
+    Assert.AreEqual(blocked.Steps[0].Plan.StartRow, blocked.Steps[0].Pair!.TargetStartRow,
+      "The existing reference and the new image must move to the same start row.");
   }
 
   [TestMethod]

@@ -21,25 +21,34 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     var images = new[] { new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 60)) };
     var first = service.PlaceImages(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "1-1");
     Assert.IsTrue(first.Succeeded, first.Message);
-    SetCellValue(sheet, 40, 19, "Preserve this cell");
-    var placed = service.PlaceImages(identity, "OtherTarget", EvidenceSide.Old,
-      [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 600))], requestedCaseLabel: "1-1");
+    SetCellValue(sheet, 5, 19, "Occupied start");
+    SetCellValue(sheet, 50, 19, "Preserve this cell");
+    var placed = service.PlaceImages(identity, "OtherTarget", EvidenceSide.Old, images, requestedCaseLabel: "1-1");
     Assert.IsTrue(placed.Succeeded, placed.Message);
-    Assert.AreEqual(5, placed.PlacedImages[0].FocusCell.Row);
-    var shiftedCellRow = 40 + (placed.ReferenceResize?.Insertion?.Count ?? 0);
-    Assert.IsTrue(placed.AppliedInsertions.Any(row => row.StartRow == shiftedCellRow));
+    Assert.IsGreaterThan(50, placed.PlacedImages[0].FocusCell.Row);
+    Assert.IsNotNull(placed.ReferenceResize?.Insertion, "Moving the pair below row 50 must expand the CASE.");
     var snapshot = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot!;
+    var reference = snapshot.Shapes.Single(shape => shape.Name == first.PlacedImages[0].ShapeName);
     var picture = snapshot.Shapes.Single(shape => shape.Name == placed.PlacedImages[0].ShapeName);
-    Assert.IsTrue(snapshot.Cells.Any(cell => cell.Column == 19 && cell.Row > picture.EndRow && cell.HasValueOrFormula));
+    Assert.AreEqual(reference.StartRow, picture.StartRow);
+    Assert.AreEqual(reference.TopPoints, picture.TopPoints, 0.05);
+    Assert.IsTrue(snapshot.Cells.Any(cell => cell.Column == 19 && cell.Row == 5 && cell.HasValueOrFormula));
+    Assert.IsTrue(snapshot.Cells.Any(cell => cell.Column == 19 && cell.Row == 50 && cell.HasValueOrFormula));
     Assert.IsTrue(new ExcelManagedShapeService().Delete(identity, placed.PlacedImages[0].Target).Succeeded);
     foreach (var row in placed.AppliedInsertions.Reverse())
     {
       var undo = new ExcelRowMutationService().DeleteRowsIfSafe(identity, row.WorksheetName, row.StartRow, row.Count);
       Assert.IsTrue(undo.Succeeded && undo.Changed, undo.Message);
     }
-    if (placed.ReferenceResize is { } reference) Assert.IsTrue(reference.SetApplied(identity, false).Succeeded);
+    Assert.IsTrue(placed.ReferenceResize!.SetApplied(identity, false).Succeeded);
     var restored = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot!;
-    Assert.IsTrue(restored.Cells.Any(cell => cell.Row == 40 && cell.Column == 19 && cell.HasValueOrFormula));
+    Assert.AreEqual(5, restored.Shapes.Single(shape => shape.Name == first.PlacedImages[0].ShapeName).StartRow);
+    Assert.IsTrue(restored.Cells.Any(cell => cell.Row == 5 && cell.Column == 19 && cell.HasValueOrFormula));
+    Assert.IsTrue(restored.Cells.Any(cell => cell.Row == 50 && cell.Column == 19 && cell.HasValueOrFormula));
+    Assert.IsTrue(placed.ReferenceResize.SetApplied(identity, true).Succeeded);
+    var redone = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot!;
+    Assert.IsGreaterThan(50, redone.Shapes.Single(shape => shape.Name == first.PlacedImages[0].ShapeName).StartRow);
+    Assert.IsTrue(placed.ReferenceResize.SetApplied(identity, false).Succeeded);
   }
 
   private static void VerifyPairedImageAlignment(object sheet, WorkbookIdentity identity, string imagePath)
@@ -94,11 +103,10 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             var recovered = service.PlaceImages(identity, "OtherTarget", EvidenceSide.Old,
               [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, height))], requestedCaseLabel: "1-1");
             Assert.IsTrue(recovered.Succeeded, recovered.Message);
-            Assert.IsNull(recovered.ReferenceResize, "The obstacle must prevent reference enlargement and trigger recovery.");
+            Assert.IsNotNull(recovered.ReferenceResize, "The pair must move together when its original band is blocked.");
             var kept = shapes.Inspect(identity, "OtherTarget", original.ShapeName).Shape!;
-            Assert.AreEqual(original.WidthPoints, kept.WidthPoints, 0.05);
-            Assert.AreEqual(original.HeightPoints, kept.HeightPoints, 0.05);
-            Assert.AreEqual(original.TopPoints, recovered.PlacedImages[0].Target.TopPoints, 0.05);
+            Assert.AreEqual(kept.TopPoints, recovered.PlacedImages[0].Target.TopPoints, 0.05);
+            Assert.AreNotEqual(original.TopPoints, kept.TopPoints, "The blocked band must be replaced by a common free band.");
             Assert.IsTrue(shapes.Delete(identity, recovered.PlacedImages[0].Target).Succeeded);
             foreach (var inserted in recovered.AppliedInsertions.Reverse())
             {
@@ -106,6 +114,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
                 inserted.WorksheetName, inserted.StartRow, inserted.Count);
               Assert.IsTrue(deleted.Succeeded && deleted.Changed, deleted.Message);
             }
+            Assert.IsTrue(recovered.ReferenceResize.SetApplied(identity, false).Succeeded);
           }
           finally
           {

@@ -52,6 +52,8 @@ public sealed class ExcelManagedShapeService
       void Apply(ManagedShapeTarget target)
       {
         SetProperty(shape!, "LockAspectRatio", MsoFalse);
+        SetProperty(shape!, "Left", target.LeftPoints);
+        SetProperty(shape!, "Top", target.TopPoints);
         SetProperty(shape!, "Width", target.WidthPoints);
         SetProperty(shape!, "Height", target.HeightPoints);
         SetProperty(shape!, "AlternativeText", target.AlternativeText);
@@ -75,10 +77,10 @@ public sealed class ExcelManagedShapeService
             if (Equals(GetRequiredProperty(other, "Name"), expected.ShapeName)) continue;
             var left = ReadFiniteDouble(other, "Left");
             var top = ReadFiniteDouble(other, "Top");
-            if (current.LeftPoints < left + ReadFiniteDouble(other, "Width") - 0.05 &&
-              current.LeftPoints + desired.WidthPoints > left + 0.05 &&
-              current.TopPoints < top + ReadFiniteDouble(other, "Height") - 0.05 &&
-              current.TopPoints + desired.HeightPoints > top + 0.05)
+            if (desired.LeftPoints < left + ReadFiniteDouble(other, "Width") - 0.05 &&
+              desired.LeftPoints + desired.WidthPoints > left + 0.05 &&
+              desired.TopPoints < top + ReadFiniteDouble(other, "Height") - 0.05 &&
+              desired.TopPoints + desired.HeightPoints > top + 0.05)
               return ManagedShapeMutationResult.Failed("倍率変更後の画像が既存の図形と重なるため停止しました。");
           }
           finally { ComRelease.Release(other); }
@@ -87,6 +89,7 @@ public sealed class ExcelManagedShapeService
         changed = true;
         Apply(desired);
         if (!TryReadManagedTarget(shape, workbook, out var after, out _) ||
+          !NearlyEqual(after.LeftPoints, desired.LeftPoints) || !NearlyEqual(after.TopPoints, desired.TopPoints) ||
           !NearlyEqual(after.WidthPoints, desired.WidthPoints) || !NearlyEqual(after.HeightPoints, desired.HeightPoints))
           throw new InvalidOperationException("画像サイズを検証できません。");
         return new ManagedShapeMutationResult(true, true, current, after, "参照画像の倍率を変更しました。");
