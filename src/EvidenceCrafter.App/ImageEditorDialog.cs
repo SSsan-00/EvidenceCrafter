@@ -15,8 +15,14 @@ internal sealed class ImageEditorDialog : Form
   private int[] customColors;
   private bool confirmed;
   private readonly Rectangle? captureWindowBounds;
+  private readonly RainbowBackdrop rainbowBackdrop = new();
+  private readonly System.Windows.Forms.Timer rainbowAnimationTimer = new() { Interval = 33 };
 
-  public ImageEditorDialog(Image image, int[]? customColors = null, Rectangle? captureWindowBounds = null)
+  public ImageEditorDialog(
+    Image image,
+    int[]? customColors = null,
+    Rectangle? captureWindowBounds = null,
+    RainbowBackgroundMode rainbowBackgroundMode = RainbowBackgroundMode.None)
   {
     this.customColors = customColors?.Take(16).ToArray() ?? [];
     this.captureWindowBounds = captureWindowBounds;
@@ -29,6 +35,13 @@ internal sealed class ImageEditorDialog : Form
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
     KeyPreview = true;
+    rainbowBackdrop.Dock = DockStyle.Fill;
+    rainbowBackdrop.BaseColor = UiTheme.Canvas;
+    rainbowBackdrop.ThemeColor = UiTheme.ThemeColor;
+    rainbowBackdrop.Mode = rainbowBackgroundMode;
+    rainbowAnimationTimer.Tick += (_, _) => rainbowBackdrop.AdvanceAnimation();
+    VisibleChanged += (_, _) => rainbowAnimationTimer.Enabled =
+      (rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated) && Visible;
 
     var toolStrip = new ToolStrip
     {
@@ -38,6 +51,7 @@ internal sealed class ImageEditorDialog : Form
       BackColor = UiTheme.SurfaceMuted,
       ForeColor = UiTheme.TextOn(UiTheme.SurfaceMuted),
     };
+    if (rainbowBackgroundMode != RainbowBackgroundMode.None) toolStrip.BackColor = Color.Transparent;
 
     var rectangleButton = AddToolButton(toolStrip, "枠", ImageEditorTool.Rectangle);
     AddToolButton(toolStrip, "矢印", ImageEditorTool.Arrow);
@@ -104,13 +118,17 @@ internal sealed class ImageEditorDialog : Form
       if (dialog.ShowDialog(this) == DialogResult.OK) document.UpdateText(annotationId, dialog.EnteredText);
     };
 
-    var statusStrip = new StatusStrip { SizingGrip = false, BackColor = UiTheme.SurfaceMuted };
+    var statusStrip = new StatusStrip
+    {
+      SizingGrip = false,
+      BackColor = rainbowBackgroundMode == RainbowBackgroundMode.None ? UiTheme.SurfaceMuted : Color.Transparent,
+    };
     statusLabel = new ToolStripStatusLabel
     {
       Spring = true,
       TextAlign = ContentAlignment.MiddleLeft,
       Text = string.Empty,
-      ForeColor = UiTheme.TextMuted,
+      ForeColor = rainbowBackgroundMode == RainbowBackgroundMode.None ? UiTheme.TextMuted : Color.Black,
     };
     canvas.ActionRejected += (_, message) => statusLabel.Text = message;
     statusStrip.Items.Add(statusLabel);
@@ -137,6 +155,7 @@ internal sealed class ImageEditorDialog : Form
       Padding = new Padding(8),
       BackColor = UiTheme.Canvas,
     };
+    UiTheme.StyleCanvas(bottomPanel);
     UiTheme.StyleButton(applyButton, Font, primary: true);
     applyButton.MinimumSize = new Size(132, 32);
     UiTheme.StyleButton(cancelButton, Font);
@@ -144,10 +163,12 @@ internal sealed class ImageEditorDialog : Form
     bottomPanel.Controls.Add(cancelButton);
     bottomPanel.Controls.Add(applyButton);
 
-    Controls.Add(canvas);
-    Controls.Add(bottomPanel);
-    Controls.Add(statusStrip);
-    Controls.Add(toolStrip);
+    rainbowBackdrop.Controls.Add(canvas);
+    rainbowBackdrop.Controls.Add(bottomPanel);
+    rainbowBackdrop.Controls.Add(statusStrip);
+    rainbowBackdrop.Controls.Add(toolStrip);
+    Controls.Add(rainbowBackdrop);
+    UiTheme.ApplyRainbowBackground(this, rainbowBackgroundMode != RainbowBackgroundMode.None);
     AcceptButton = applyButton;
     CancelButton = cancelButton;
 
@@ -201,6 +222,7 @@ internal sealed class ImageEditorDialog : Form
   {
     if (disposing)
     {
+      rainbowAnimationTimer.Dispose();
       document.Changed -= DocumentChanged;
       canvas.TextRequested -= CanvasTextRequested;
       document.Dispose();

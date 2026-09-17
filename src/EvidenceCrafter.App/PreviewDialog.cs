@@ -9,6 +9,8 @@ internal sealed class PreviewDialog : Form
   private readonly Button placeButton;
   private readonly Button editButton;
   private readonly Rectangle? captureWindowBounds;
+  private readonly RainbowBackdrop rainbowBackdrop = new();
+  private readonly System.Windows.Forms.Timer rainbowAnimationTimer = new() { Interval = 33 };
 
   public PreviewDialog(
     Image image,
@@ -16,7 +18,8 @@ internal sealed class PreviewDialog : Form
     string worksheetName,
     EvidenceSide side,
     AutomaticPlacementAnalysisResult? analysis,
-    Rectangle? captureWindowBounds = null)
+    Rectangle? captureWindowBounds = null,
+    RainbowBackgroundMode rainbowBackgroundMode = RainbowBackgroundMode.None)
   {
     this.image = image ?? throw new ArgumentNullException(nameof(image));
     this.captureWindowBounds = captureWindowBounds;
@@ -27,6 +30,13 @@ internal sealed class PreviewDialog : Form
     AutoScaleMode = AutoScaleMode.Dpi;
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
+    rainbowBackdrop.Dock = DockStyle.Fill;
+    rainbowBackdrop.BaseColor = UiTheme.Canvas;
+    rainbowBackdrop.ThemeColor = UiTheme.ThemeColor;
+    rainbowBackdrop.Mode = rainbowBackgroundMode;
+    rainbowAnimationTimer.Tick += (_, _) => rainbowBackdrop.AdvanceAnimation();
+    VisibleChanged += (_, _) => rainbowAnimationTimer.Enabled =
+      (rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated) && Visible;
 
     var layout = new TableLayoutPanel
     {
@@ -36,6 +46,7 @@ internal sealed class PreviewDialog : Form
       ColumnCount = 1,
       RowCount = 3,
     };
+    UiTheme.StyleCanvas(layout);
     layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
     layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
     layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -49,6 +60,7 @@ internal sealed class PreviewDialog : Form
       BackColor = UiTheme.SurfaceMuted,
       Padding = new Padding(8),
     };
+    UiTheme.StyleSurface(context, muted: true);
     layout.Controls.Add(context, 0, 0);
 
     var picture = new PictureBox
@@ -91,6 +103,7 @@ internal sealed class PreviewDialog : Form
       FlowDirection = FlowDirection.RightToLeft,
       WrapContents = false,
     };
+    UiTheme.StyleCanvas(buttons);
     foreach (var button in new[] { placeButton, editButton, closeButton })
     {
       UiTheme.StyleButton(button, Font, ReferenceEquals(button, placeButton) && canPlace);
@@ -101,7 +114,9 @@ internal sealed class PreviewDialog : Form
 
     AcceptButton = canPlace ? placeButton : closeButton;
     CancelButton = closeButton;
-    Controls.Add(layout);
+    rainbowBackdrop.Controls.Add(layout);
+    Controls.Add(rainbowBackdrop);
+    UiTheme.ApplyRainbowBackground(this, rainbowBackgroundMode != RainbowBackgroundMode.None);
   }
 
   protected override void OnShown(EventArgs eventArgs)
@@ -168,6 +183,7 @@ internal sealed class PreviewDialog : Form
   {
     if (disposing)
     {
+      rainbowAnimationTimer.Dispose();
       image.Dispose();
     }
 

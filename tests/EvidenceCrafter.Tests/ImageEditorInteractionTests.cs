@@ -14,7 +14,7 @@ public sealed class ImageEditorInteractionTests
     using var bitmap = new Bitmap(400, 200);
     using var editor = new ImageEditorDialog(bitmap) { TopMost = true };
     editor.Show();
-    var canvas = editor.Controls.OfType<ImageEditorCanvas>().Single();
+    var canvas = editor.Controls.OfType<RainbowBackdrop>().Single().Controls.OfType<ImageEditorCanvas>().Single();
     canvas.Tool = ImageEditorTool.Text;
     canvas.Capture = true;
     bool? captured = null;

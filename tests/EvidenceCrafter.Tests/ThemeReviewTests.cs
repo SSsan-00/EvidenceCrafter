@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using EvidenceCrafter.App;
+using EvidenceCrafter.Core.Models;
 
 namespace EvidenceCrafter.Tests;
 
@@ -145,6 +146,19 @@ public sealed class ThemeReviewTests
 
     UiTheme.ApplyRainbowBackground(form, enabled: false);
     Assert.AreEqual(UiTheme.Surface.ToArgb(), card.BackColor.ToArgb());
+  });
+
+  [TestMethod]
+  public void PreviewAndEditor_UseTheCurrentRainbowBackdropMode() => OnSta(() =>
+  {
+    using var previewImage = new Bitmap(64, 32);
+    using var editorImage = new Bitmap(64, 32);
+    using var preview = new PreviewDialog(previewImage, "book", "B1", EvidenceSide.New, null,
+      rainbowBackgroundMode: RainbowBackgroundMode.Animated);
+    using var editor = new ImageEditorDialog(editorImage, rainbowBackgroundMode: RainbowBackgroundMode.ThemeAnimated);
+
+    Assert.AreEqual(RainbowBackgroundMode.Animated, preview.Controls.OfType<RainbowBackdrop>().Single().Mode);
+    Assert.AreEqual(RainbowBackgroundMode.ThemeAnimated, editor.Controls.OfType<RainbowBackdrop>().Single().Mode);
   });
 
   private static double Contrast(Color first, Color second)

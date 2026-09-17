@@ -1444,7 +1444,8 @@ public sealed class MainForm : Form
         worksheetName,
         requestedSide,
         analysis,
-        captureWindowBounds);
+        captureWindowBounds,
+        rainbowBackgroundMode);
       preview.TopMost = TopMost;
       clipboardPreviewOpen = true;
       DialogResult previewResult;
@@ -1466,7 +1467,7 @@ public sealed class MainForm : Form
       }
       else if (previewResult == DialogResult.Retry && workbook is not null)
       {
-        using var editor = new ImageEditorDialog(image, settings.CustomColors, captureWindowBounds);
+        using var editor = new ImageEditorDialog(image, settings.CustomColors, captureWindowBounds, rainbowBackgroundMode);
         editor.TopMost = TopMost;
         var editorResult = editor.ShowDialog(this);
         SaveCustomColors(editor.CustomColors);
@@ -1981,7 +1982,10 @@ public sealed class MainForm : Form
         return;
       }
 
-      using var editor = new ImageEditorDialog(clipboardImage, settings.CustomColors) { TopMost = TopMost };
+      using var editor = new ImageEditorDialog(clipboardImage, settings.CustomColors, rainbowBackgroundMode: rainbowBackgroundMode)
+      {
+        TopMost = TopMost,
+      };
       var editorResult = editor.ShowDialog(this);
       SaveCustomColors(editor.CustomColors);
       if (editorResult != DialogResult.OK)
