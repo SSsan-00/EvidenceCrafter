@@ -11,6 +11,7 @@ public sealed record PairedImagePlan(
   int EndRow,
   bool Legacy)
 {
+  public double? ReferenceScale { get; init; }
   public int TargetStartRow { get; init; } = StartRow;
   public double? TargetTopPoints { get; init; }
 }

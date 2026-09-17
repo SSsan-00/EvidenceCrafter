@@ -324,7 +324,7 @@ public sealed class ExcelAutomaticPlacementService
         var inspected = service.Inspect(workbook, initialAnalysis.WorksheetName, pair.ShapeName);
         if (!inspected.Succeeded || inspected.Shape is not { } before)
           return AutomaticPlacementResult.Failed(inspected.Message, initialAnalysis);
-        var metadata = before.Metadata with { AppliedScale = pair.Legacy ? null : pair.Scale };
+        var metadata = before.Metadata with { AppliedScale = pair.ReferenceScale };
         if (pair.TargetStartRow != pair.StartRow)
           metadata = metadata with { AnchorCell = new CellReference(pair.TargetStartRow, before.Metadata.AnchorCell.Column) };
         var desired = before with
@@ -741,21 +741,25 @@ public sealed class ExcelAutomaticPlacementService
       var currentScale = reference.SourceDimensions is { } original
         ? reference.WidthPoints / original.WidthPoints
         : reference.WidthPoints / image.WidthPoints;
-      var scale = Math.Min(currentScale, width / image.WidthPoints);
-      return new(reference.Name, scale, reference.WidthPoints, reference.HeightPoints,
-        reference.StartRow, reference.EndRow, reference.SourceDimensions is null);
+      var preservedScale = Math.Min(currentScale, width / image.WidthPoints);
+      return new(reference.Name, preservedScale, reference.WidthPoints, reference.HeightPoints,
+        reference.StartRow, reference.EndRow, reference.SourceDimensions is null)
+      {
+        ReferenceScale = reference.SourceDimensions is { } sourceDimensions
+          ? reference.WidthPoints / sourceDimensions.WidthPoints : null,
+      };
     }
-    if (reference.SourceDimensions is { } source)
-    {
-      var scale = Math.Min(width / image.WidthPoints, referenceWidth / source.WidthPoints);
-      return new(reference.Name, scale, source.WidthPoints * scale, source.HeightPoints * scale,
-        reference.StartRow, reference.EndRow, false);
-    }
-    // Legacy pictures lack their original dimensions: match displayed widths, preserving aspect ratios.
-    var commonWidth = Math.Min(width, referenceWidth);
-    return new(reference.Name, commonWidth / image.WidthPoints, commonWidth,
+    var maximumWidth = Math.Min(width, referenceWidth);
+    var incomingWidth = Math.Min(image.WidthPoints, width);
+    var commonWidth = Math.Min(Math.Max(reference.WidthPoints, incomingWidth), maximumWidth);
+    var scale = commonWidth / image.WidthPoints;
+    return new(reference.Name, scale, commonWidth,
       reference.HeightPoints * commonWidth / reference.WidthPoints,
-      reference.StartRow, reference.EndRow, true);
+      reference.StartRow, reference.EndRow, reference.SourceDimensions is null)
+    {
+      ReferenceScale = reference.SourceDimensions is { } sizingSource
+        ? commonWidth / sizingSource.WidthPoints : null,
+    };
   }
 
   private static double MoveTop(SheetSnapshot snapshot, int currentRow, int targetRow, double currentTop)

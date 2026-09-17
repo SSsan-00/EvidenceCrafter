@@ -295,7 +295,7 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
-  public void AnalyzeSnapshot_PairsOppositeImageByOrdinal_AndUsesCommonScale()
+  public void AnalyzeSnapshot_PairsOppositeImageByOrdinal_AtTheLargerDisplayedWidth()
   {
     var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
     var snapshot = Snapshot(signals) with
@@ -316,10 +316,38 @@ public sealed class AutomaticPlacementServiceTests
     Assert.IsTrue(result.Succeeded, result.Message);
     var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected an opposite-side pair.");
     Assert.AreEqual("old-1", pair.ShapeName);
-    Assert.AreEqual(1.34, pair.Scale, 0.001);
-    Assert.AreEqual(268, pair.Width, 0.001);
-    Assert.AreEqual(134, result.Steps[0].Plan.Image.WidthPoints, 0.001);
+    Assert.AreEqual(1, pair.Scale, 0.001);
+    Assert.AreEqual(0.5, pair.ReferenceScale!.Value, 0.001);
+    Assert.AreEqual(100, pair.Width, 0.001);
+    Assert.AreEqual(100, result.Steps[0].Plan.Image.WidthPoints, 0.001);
     Assert.AreEqual(5, result.Steps[0].Plan.StartRow);
+  }
+
+  [TestMethod]
+  public void AnalyzeSnapshot_PairedWidthUsesTheLargerImageButRespectsBothSides()
+  {
+    var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
+    var snapshot = Snapshot(signals) with
+    {
+      Shapes = [new SnapshotShape("old-1", 5, 10, 19, 25, true)
+      {
+        WidthPoints = 120,
+        HeightPoints = 60,
+        SourceDimensions = new ImageDimensions(120, 60),
+      }],
+    };
+
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(
+      snapshot,
+      EvidenceSide.New,
+      [new AutomaticPlacementImage("new.png", new ImageDimensions(500, 250))]);
+
+    Assert.IsTrue(result.Succeeded, result.Message);
+    var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected an opposite-side pair.");
+    Assert.AreEqual(268, pair.Width, 0.001);
+    Assert.AreEqual(268d / 500d, pair.Scale, 0.001);
+    Assert.AreEqual(268d / 120d, pair.ReferenceScale!.Value, 0.001);
+    Assert.AreEqual(268, result.Steps[0].Plan.Image.WidthPoints, 0.001);
   }
 
   [TestMethod]
@@ -344,7 +372,7 @@ public sealed class AutomaticPlacementServiceTests
     Assert.IsTrue(result.Succeeded, result.Message);
     var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected the second opposite-side image.");
     Assert.AreEqual("new-2", pair.ShapeName);
-    Assert.AreEqual(2.233, pair.Scale, 0.001);
+    Assert.AreEqual(2, pair.Scale, 0.001);
     Assert.AreEqual(20, result.Steps[0].Plan.StartRow);
   }
 
@@ -369,8 +397,8 @@ public sealed class AutomaticPlacementServiceTests
     Assert.IsTrue(result.Succeeded, result.Message);
     var pair = result.Steps[0].Pair ?? throw new AssertFailedException("Expected a legacy opposite-side pair.");
     Assert.IsTrue(pair.Legacy);
-    Assert.AreEqual(5.36, pair.Scale, 0.001);
-    Assert.AreEqual(268, pair.Width, 0.001);
+    Assert.AreEqual(2, pair.Scale, 0.001);
+    Assert.AreEqual(100, pair.Width, 0.001);
   }
 
   [TestMethod]
@@ -447,7 +475,7 @@ public sealed class AutomaticPlacementServiceTests
       Cells = [new SnapshotCell(12, 19, true, false, false, false)],
     };
     var service = new ExcelAutomaticPlacementService();
-    var images = new[] { new AutomaticPlacementImage("old.png", new ImageDimensions(120, 60)) };
+    var images = new[] { new AutomaticPlacementImage("old.png", new ImageDimensions(120, 240)) };
     var recovered = service.AnalyzeSnapshot(snapshot, EvidenceSide.Old, images);
     Assert.IsTrue(recovered.Succeeded, recovered.Message);
     var plan = recovered.Steps[0].Plan;
