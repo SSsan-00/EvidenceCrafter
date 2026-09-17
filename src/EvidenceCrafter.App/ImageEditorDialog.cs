@@ -15,6 +15,7 @@ internal sealed class ImageEditorDialog : Form
   private int[] customColors;
   private bool confirmed;
   private readonly Rectangle? captureWindowBounds;
+  private readonly RainbowBackgroundMode rainbowBackgroundMode;
   private readonly RainbowBackdrop rainbowBackdrop = new();
   private readonly System.Windows.Forms.Timer rainbowAnimationTimer = new() { Interval = 33 };
 
@@ -26,6 +27,7 @@ internal sealed class ImageEditorDialog : Form
   {
     this.customColors = customColors?.Take(16).ToArray() ?? [];
     this.captureWindowBounds = captureWindowBounds;
+    this.rainbowBackgroundMode = rainbowBackgroundMode;
     document = new ImageEditDocument(image);
     Text = "画像編集";
     StartPosition = captureWindowBounds is null ? FormStartPosition.CenterParent : FormStartPosition.Manual;
@@ -114,7 +116,7 @@ internal sealed class ImageEditorDialog : Form
     canvas.TextEditRequested += (_, annotationId) =>
     {
       if (!document.TryGetTextAnnotation(annotationId, out var annotation)) return;
-      using var dialog = new ImageTextInputDialog(annotation.Text) { TopMost = TopMost };
+      using var dialog = new ImageTextInputDialog(annotation.Text, rainbowBackgroundMode) { TopMost = TopMost };
       if (dialog.ShowDialog(this) == DialogResult.OK) document.UpdateText(annotationId, dialog.EnteredText);
     };
 
@@ -263,7 +265,7 @@ internal sealed class ImageEditorDialog : Form
 
   private void CanvasTextRequested(object? sender, ImageTextRequestedEventArgs eventArgs)
   {
-    using var dialog = new ImageTextInputDialog() { TopMost = TopMost };
+    using var dialog = new ImageTextInputDialog(rainbowBackgroundMode: rainbowBackgroundMode) { TopMost = TopMost };
     if (dialog.ShowDialog(this) == DialogResult.OK)
     {
       document.DrawText(dialog.EnteredText, eventArgs.ImageLocation, canvas.DrawingColor);
@@ -782,6 +784,8 @@ internal sealed class ImageTextRequestedEventArgs(Point imageLocation) : EventAr
 
 internal sealed class ImageTextInputDialog : Form
 {
+  private readonly RainbowBackdrop rainbowBackdrop = new();
+  private readonly System.Windows.Forms.Timer rainbowAnimationTimer = new() { Interval = 33 };
   private readonly TextBox textBox = new()
   {
     Dock = DockStyle.Fill,
@@ -791,7 +795,9 @@ internal sealed class ImageTextInputDialog : Form
     MaxLength = 500,
   };
 
-  public ImageTextInputDialog(string? existingText = null)
+  public ImageTextInputDialog(
+    string? existingText = null,
+    RainbowBackgroundMode rainbowBackgroundMode = RainbowBackgroundMode.None)
   {
     Text = existingText is null ? "テキストを追加" : "テキストを編集";
     textBox.Text = existingText ?? string.Empty;
@@ -803,6 +809,13 @@ internal sealed class ImageTextInputDialog : Form
     Font = new Font("Meiryo UI", 9F);
     UiTheme.StyleForm(this);
     ShowInTaskbar = false;
+    rainbowBackdrop.Dock = DockStyle.Fill;
+    rainbowBackdrop.BaseColor = UiTheme.Canvas;
+    rainbowBackdrop.ThemeColor = UiTheme.ThemeColor;
+    rainbowBackdrop.Mode = rainbowBackgroundMode;
+    rainbowAnimationTimer.Tick += (_, _) => rainbowBackdrop.AdvanceAnimation();
+    VisibleChanged += (_, _) => rainbowAnimationTimer.Enabled =
+      (rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated) && Visible;
 
     var label = new Label
     {
@@ -812,6 +825,7 @@ internal sealed class ImageTextInputDialog : Form
       Padding = new Padding(0, 0, 0, 6),
       ForeColor = UiTheme.Text,
     };
+    UiTheme.StyleText(label);
     var okButton = new Button
     {
       Text = existingText is null ? "追加" : "変更",
@@ -832,6 +846,7 @@ internal sealed class ImageTextInputDialog : Form
       Padding = new Padding(0, 8, 0, 0),
       BackColor = UiTheme.Canvas,
     };
+    UiTheme.StyleCanvas(buttons);
     UiTheme.StyleButton(okButton, Font, primary: true);
     okButton.MinimumSize = new Size(92, 32);
     UiTheme.StyleButton(cancelButton, Font);
@@ -840,10 +855,13 @@ internal sealed class ImageTextInputDialog : Form
     buttons.Controls.Add(okButton);
 
     var layout = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12), BackColor = UiTheme.Canvas };
+    UiTheme.StyleCanvas(layout);
     layout.Controls.Add(textBox);
     layout.Controls.Add(label);
     layout.Controls.Add(buttons);
-    Controls.Add(layout);
+    rainbowBackdrop.Controls.Add(layout);
+    Controls.Add(rainbowBackdrop);
+    UiTheme.ApplyRainbowBackground(this, rainbowBackgroundMode != RainbowBackgroundMode.None);
     AcceptButton = okButton;
     FormClosing += (_, args) =>
     {
@@ -875,5 +893,11 @@ internal sealed class ImageTextInputDialog : Form
   {
     base.OnShown(eventArgs);
     textBox.Focus();
+  }
+
+  protected override void Dispose(bool disposing)
+  {
+    if (disposing) rainbowAnimationTimer.Dispose();
+    base.Dispose(disposing);
   }
 }

@@ -149,16 +149,18 @@ public sealed class ThemeReviewTests
   });
 
   [TestMethod]
-  public void PreviewAndEditor_UseTheCurrentRainbowBackdropMode() => OnSta(() =>
+  public void PreviewEditorAndTextInput_UseTheCurrentRainbowBackdropMode() => OnSta(() =>
   {
     using var previewImage = new Bitmap(64, 32);
     using var editorImage = new Bitmap(64, 32);
     using var preview = new PreviewDialog(previewImage, "book", "B1", EvidenceSide.New, null,
       rainbowBackgroundMode: RainbowBackgroundMode.Animated);
     using var editor = new ImageEditorDialog(editorImage, rainbowBackgroundMode: RainbowBackgroundMode.ThemeAnimated);
+    using var textInput = new ImageTextInputDialog(rainbowBackgroundMode: RainbowBackgroundMode.Static);
 
     Assert.AreEqual(RainbowBackgroundMode.Animated, preview.Controls.OfType<RainbowBackdrop>().Single().Mode);
     Assert.AreEqual(RainbowBackgroundMode.ThemeAnimated, editor.Controls.OfType<RainbowBackdrop>().Single().Mode);
+    Assert.AreEqual(RainbowBackgroundMode.Static, textInput.Controls.OfType<RainbowBackdrop>().Single().Mode);
   });
 
   private static double Contrast(Color first, Color second)
