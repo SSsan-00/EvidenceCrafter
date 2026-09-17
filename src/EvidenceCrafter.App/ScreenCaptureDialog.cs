@@ -11,6 +11,7 @@ internal sealed class ScreenCaptureDialog : Form
   private Point selectionEnd;
   private bool selecting;
   private Bitmap? capturedImage;
+  private Rectangle? capturedBounds;
 
   public ScreenCaptureDialog()
   {
@@ -49,6 +50,8 @@ internal sealed class ScreenCaptureDialog : Form
     capturedImage = null;
     return result;
   }
+
+  public Rectangle CapturedBounds => capturedBounds ?? throw new InvalidOperationException("キャプチャ範囲がありません。");
 
   internal static Rectangle NormalizeSelection(Point first, Point second)
   {
@@ -141,6 +144,8 @@ internal sealed class ScreenCaptureDialog : Form
     }
 
     capturedImage = desktop.Clone(selection, PixelFormat.Format32bppPArgb);
+    selection.Offset(Bounds.Location);
+    capturedBounds = selection;
     DialogResult = DialogResult.OK;
     Close();
   }

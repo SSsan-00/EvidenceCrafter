@@ -1352,10 +1352,15 @@ public sealed class MainForm : Form
         return;
       }
 
+      var captureWindowBounds = CaptureWindowPlacement.TryGetWindowBounds(capture.CapturedBounds.Location +
+        new Size(capture.CapturedBounds.Width / 2, capture.CapturedBounds.Height / 2)) ??
+        Screen.FromPoint(capture.CapturedBounds.Location + new Size(capture.CapturedBounds.Width / 2,
+          capture.CapturedBounds.Height / 2)).WorkingArea;
       using var image = capture.TakeCapturedImage();
       Show();
       Activate();
-      await ShowImagePreviewAsync(image, "キャプチャ", suppressAdvanceAfterPlacement: suppressAdvanceAfterPlacement);
+      await ShowImagePreviewAsync(image, "キャプチャ", suppressAdvanceAfterPlacement: suppressAdvanceAfterPlacement,
+        captureWindowBounds: captureWindowBounds);
     }
     catch (Exception exception) when (exception is ExternalException or InvalidOperationException)
     {
@@ -1384,7 +1389,8 @@ public sealed class MainForm : Form
     Image image,
     string sourceLabel,
     MemoryStream? encodedImage = null,
-    bool suppressAdvanceAfterPlacement = false)
+    bool suppressAdvanceAfterPlacement = false,
+    Rectangle? captureWindowBounds = null)
   {
     var workbook = workbookSelector.SelectedItem as WorkbookIdentity;
     var worksheetName = string.IsNullOrWhiteSpace(worksheetNameBox.Text)
@@ -1437,7 +1443,8 @@ public sealed class MainForm : Form
         workbook?.DisplayLabel ?? "未選択",
         worksheetName,
         requestedSide,
-        analysis);
+        analysis,
+        captureWindowBounds);
       preview.TopMost = TopMost;
       clipboardPreviewOpen = true;
       DialogResult previewResult;
@@ -1459,7 +1466,7 @@ public sealed class MainForm : Form
       }
       else if (previewResult == DialogResult.Retry && workbook is not null)
       {
-        using var editor = new ImageEditorDialog(image, settings.CustomColors);
+        using var editor = new ImageEditorDialog(image, settings.CustomColors, captureWindowBounds);
         editor.TopMost = TopMost;
         var editorResult = editor.ShowDialog(this);
         SaveCustomColors(editor.CustomColors);

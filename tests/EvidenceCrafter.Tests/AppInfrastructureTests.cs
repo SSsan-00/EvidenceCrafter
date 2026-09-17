@@ -37,6 +37,18 @@ public sealed class AppInfrastructureTests
   }
 
   [TestMethod]
+  public void CaptureWindowPlacement_CentersWithinTheCapturedWindowAndKeepsTheDialogVisible()
+  {
+    var centered = CaptureWindowPlacement.CenterLocation(
+      new Rectangle(2_000, 100, 1_200, 800), new Size(900, 600), new Rectangle(1_920, 0, 1_920, 1_080));
+    Assert.AreEqual(new Point(2_150, 200), centered);
+
+    var clamped = CaptureWindowPlacement.CenterLocation(
+      new Rectangle(3_700, 0, 300, 200), new Size(900, 600), new Rectangle(1_920, 0, 1_920, 1_080));
+    Assert.AreEqual(new Point(2_940, 0), clamped);
+  }
+
+  [TestMethod]
   public void SettingsStore_RoundTripsNormalizedValuesWithoutRuntimeSelection()
   {
     using var directory = new TemporaryDirectory();

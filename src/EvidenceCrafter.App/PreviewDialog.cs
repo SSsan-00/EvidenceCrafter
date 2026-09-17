@@ -8,17 +8,20 @@ internal sealed class PreviewDialog : Form
   private readonly Image image;
   private readonly Button placeButton;
   private readonly Button editButton;
+  private readonly Rectangle? captureWindowBounds;
 
   public PreviewDialog(
     Image image,
     string workbookLabel,
     string worksheetName,
     EvidenceSide side,
-    AutomaticPlacementAnalysisResult? analysis)
+    AutomaticPlacementAnalysisResult? analysis,
+    Rectangle? captureWindowBounds = null)
   {
     this.image = image ?? throw new ArgumentNullException(nameof(image));
+    this.captureWindowBounds = captureWindowBounds;
     Text = "スクリーンショットプレビュー";
-    StartPosition = FormStartPosition.CenterParent;
+    StartPosition = captureWindowBounds is null ? FormStartPosition.CenterParent : FormStartPosition.Manual;
     MinimumSize = new Size(700, 520);
     Size = new Size(900, 680);
     AutoScaleMode = AutoScaleMode.Dpi;
@@ -99,6 +102,12 @@ internal sealed class PreviewDialog : Form
     AcceptButton = canPlace ? placeButton : closeButton;
     CancelButton = closeButton;
     Controls.Add(layout);
+  }
+
+  protected override void OnShown(EventArgs eventArgs)
+  {
+    base.OnShown(eventArgs);
+    if (captureWindowBounds is { } bounds) CaptureWindowPlacement.CenterInWindow(this, bounds);
   }
 
   protected override bool ProcessCmdKey(ref Message message, Keys keyData)

@@ -14,13 +14,15 @@ internal sealed class ImageEditorDialog : Form
   private readonly ToolStripStatusLabel statusLabel;
   private int[] customColors;
   private bool confirmed;
+  private readonly Rectangle? captureWindowBounds;
 
-  public ImageEditorDialog(Image image, int[]? customColors = null)
+  public ImageEditorDialog(Image image, int[]? customColors = null, Rectangle? captureWindowBounds = null)
   {
     this.customColors = customColors?.Take(16).ToArray() ?? [];
+    this.captureWindowBounds = captureWindowBounds;
     document = new ImageEditDocument(image);
     Text = "画像編集";
-    StartPosition = FormStartPosition.CenterParent;
+    StartPosition = captureWindowBounds is null ? FormStartPosition.CenterParent : FormStartPosition.Manual;
     MinimumSize = new Size(760, 560);
     Size = new Size(1000, 760);
     AutoScaleMode = AutoScaleMode.Dpi;
@@ -151,6 +153,12 @@ internal sealed class ImageEditorDialog : Form
 
     document.Changed += DocumentChanged;
     FormClosing += ConfirmDiscardIfNeeded;
+  }
+
+  protected override void OnShown(EventArgs eventArgs)
+  {
+    base.OnShown(eventArgs);
+    if (captureWindowBounds is { } bounds) CaptureWindowPlacement.CenterInWindow(this, bounds);
   }
 
   public bool HasChanges => document.HasChanges;
