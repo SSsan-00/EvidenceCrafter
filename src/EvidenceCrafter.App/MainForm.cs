@@ -1291,9 +1291,9 @@ public sealed class MainForm : Form
       }
 
       ResetClipboardRetry();
-      using var digestStream = new MemoryStream();
-      imageCopy.Save(digestStream, ImageFormat.Png);
-      var digest = System.Security.Cryptography.SHA256.HashData(digestStream.GetBuffer().AsSpan(0, (int)digestStream.Length));
+      var encoded = await Task.Run(() => EncodeImage(imageCopy));
+      using var digestStream = encoded.Stream;
+      var digest = encoded.Digest;
       var duplicate = compareImage && lastPreviewDigest is not null && digest.AsSpan().SequenceEqual(lastPreviewDigest);
       lastPreviewDigest = digest;
       if (duplicate)
@@ -1392,6 +1392,8 @@ public sealed class MainForm : Form
     bool suppressAdvanceAfterPlacement = false,
     Rectangle? captureWindowBounds = null)
   {
+    var resumeRainbowAnimation = rainbowAnimationTimer.Enabled;
+    rainbowAnimationTimer.Stop();
     var workbook = workbookSelector.SelectedItem as WorkbookIdentity;
     var worksheetName = string.IsNullOrWhiteSpace(worksheetNameBox.Text)
       ? "ActiveSheet"
@@ -1490,11 +1492,33 @@ public sealed class MainForm : Form
     }
     finally
     {
+      if (resumeRainbowAnimation && Visible &&
+        rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated)
+      {
+        rainbowAnimationTimer.Start();
+      }
       RestoreTopmostMode();
       if (!string.IsNullOrEmpty(imagePath))
       {
         try { File.Delete(imagePath); } catch (IOException) { }
       }
+    }
+  }
+
+  private static (MemoryStream Stream, byte[] Digest) EncodeImage(Image image)
+  {
+    var stream = new MemoryStream();
+    try
+    {
+      image.Save(stream, ImageFormat.Png);
+      var digest = System.Security.Cryptography.SHA256.HashData(
+        stream.GetBuffer().AsSpan(0, checked((int)stream.Length)));
+      return (stream, digest);
+    }
+    catch
+    {
+      stream.Dispose();
+      throw;
     }
   }
 

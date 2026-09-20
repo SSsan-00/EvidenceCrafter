@@ -21,15 +21,16 @@ public sealed class ExcelSheetSnapshotService
     WorkbookIdentity workbook,
     string worksheetName,
     int? scopeRow = null,
-    bool includeWorksheetNames = false) =>
-    CaptureCore(workbook, worksheetName, scopeRow, includeWorksheetNames, navigationOnly: false, includeShapes: true);
+    bool includeWorksheetNames = false,
+    string? scopeCaseLabel = null) =>
+    CaptureCore(workbook, worksheetName, scopeRow, includeWorksheetNames, navigationOnly: false, includeShapes: true, scopeCaseLabel);
 
   public SheetSnapshotResult CaptureForNavigation(
     WorkbookIdentity workbook,
     string worksheetName,
     bool includeWorksheetNames = false,
     bool includeShapes = true) =>
-    CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true, includeShapes);
+    CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true, includeShapes, scopeCaseLabel: null);
 
   private static SheetSnapshotResult CaptureCore(
     WorkbookIdentity workbook,
@@ -37,7 +38,8 @@ public sealed class ExcelSheetSnapshotService
     int? scopeRow,
     bool includeWorksheetNames,
     bool navigationOnly,
-    bool includeShapes)
+    bool includeShapes,
+    string? scopeCaseLabel)
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
@@ -109,7 +111,8 @@ public sealed class ExcelSheetSnapshotService
                   scopeRow,
                   includeWorksheetNames,
                   navigationOnly,
-                  includeShapes) ??
+                  includeShapes,
+                  scopeCaseLabel) ??
                 SheetSnapshotResult.Failed(worksheetName, "The selected Workbook could not be matched.");
           }
           catch (Exception exception) when (IsAutomationFailure(exception))
@@ -152,7 +155,8 @@ public sealed class ExcelSheetSnapshotService
     int? scopeRow,
     bool includeWorksheetNames,
     bool navigationOnly,
-    bool includeShapes)
+    bool includeShapes,
+    string? scopeCaseLabel)
   {
     if (TryGetProperty(runningObject, "Workbooks", out var workbooks))
     {
@@ -180,7 +184,8 @@ public sealed class ExcelSheetSnapshotService
                 scopeRow,
                 includeWorksheetNames,
                 navigationOnly,
-                includeShapes);
+                includeShapes,
+                scopeCaseLabel);
             }
           }
           finally
@@ -213,7 +218,8 @@ public sealed class ExcelSheetSnapshotService
             scopeRow,
             includeWorksheetNames,
             navigationOnly,
-            includeShapes)
+            includeShapes,
+            scopeCaseLabel)
         : null;
     }
     finally
@@ -230,7 +236,8 @@ public sealed class ExcelSheetSnapshotService
     int? scopeRow,
     bool includeWorksheetNames,
     bool navigationOnly,
-    bool includeShapes)
+    bool includeShapes,
+    string? scopeCaseLabel)
   {
     if (!WorkbookWindowMatchesIdentity(workbook, identity))
     {
@@ -345,7 +352,7 @@ public sealed class ExcelSheetSnapshotService
       var observedLastColumn = lastColumn;
       var logicalLastRow = lastRow;
 
-      var occupancyRow = scopeRow ?? activeReference.Row;
+      var occupancyRow = scopeRow ?? ResolveScopeRow(anchors, scopeCaseLabel) ?? activeReference.Row;
       var currentAnchor = anchors.LastOrDefault(anchor => anchor.Row <= occupancyRow);
       var nextAnchor = currentAnchor is null
         ? null
@@ -667,6 +674,22 @@ public sealed class ExcelSheetSnapshotService
     var result = new Dictionary<int, double>();
     ReadRowHeightBlock(worksheet, firstRow, lastRow, result);
     return result;
+  }
+
+  internal static int? ResolveScopeRow(IReadOnlyList<CaseAnchorSignal> anchors, string? scopeCaseLabel)
+  {
+    if (string.IsNullOrWhiteSpace(scopeCaseLabel) ||
+      CaseAnchorNormalizer.NormalizeCaseLabel(scopeCaseLabel) is not { } normalizedLabel)
+    {
+      return null;
+    }
+
+    var matches = CaseAnchorNormalizer.Normalize(anchors)
+      .Where(anchor => string.Equals(
+        $"{anchor.ColumnAValue}-{anchor.ColumnBValue}", normalizedLabel, StringComparison.OrdinalIgnoreCase))
+      .Take(2)
+      .ToArray();
+    return matches.Length == 1 ? matches[0].Row : null;
   }
 
   private static void ActivateTargetWorksheet(object application, object workbook, object worksheet)

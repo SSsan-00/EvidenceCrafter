@@ -58,7 +58,7 @@ public sealed class ExcelAutomaticPlacementService
       return AutomaticPlacementAnalysisResult.Failed(validation);
     }
 
-    var captured = snapshotService.Capture(workbook, worksheetName);
+    var captured = snapshotService.Capture(workbook, worksheetName, scopeCaseLabel: requestedCaseLabel);
     if (!captured.Succeeded || captured.Snapshot is null)
     {
       return AutomaticPlacementAnalysisResult.Failed(captured.Message);
@@ -73,7 +73,7 @@ public sealed class ExcelAutomaticPlacementService
 
     var activeCaseRow = ConfirmedAnchors(snapshot.LayoutSignals)
       .LastOrDefault(anchor => anchor.Row <= snapshot.ActiveCell.Row)?.Row;
-    if (selectedCase.Row != activeCaseRow)
+    if (string.IsNullOrWhiteSpace(requestedCaseLabel) && selectedCase.Row != activeCaseRow)
     {
       captured = snapshotService.Capture(workbook, snapshot.WorksheetName, selectedCase.Row);
       if (!captured.Succeeded || captured.Snapshot is null)

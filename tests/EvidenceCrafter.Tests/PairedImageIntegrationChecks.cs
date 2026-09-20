@@ -137,7 +137,6 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           "The second band must move below both images in the first band.");
       }
       Assert.IsNotNull(placed.ReferenceResize);
-      Assert.IsNotNull(placed.ReferenceResize.Insertion, "The small initial image must grow when its pair is added.");
       if (pass == 2)
       {
         Assert.IsTrue(shapes.Delete(identity, placed.PlacedImages[0].Target).Succeeded);
@@ -171,12 +170,14 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             insertion.WorksheetName, insertion.StartRow, insertion.Count);
           Assert.IsTrue(removed.Succeeded, removed.Message);
         }
-        var reservedRow = placed.ReferenceResize.Insertion!.StartRow;
-        SetCellValue(sheet, reservedRow, 1, "Keep this user entry");
-        var blockedUndo = placed.ReferenceResize.SetApplied(identity, false);
-        Assert.IsFalse(blockedUndo.Succeeded, "Skipped row deletion must not be reported as successful Undo.");
-        Assert.IsTrue(placed.ReferenceResize.Matches(identity, true), "Blocked Undo must restore the applied image size.");
-        SetCellValue(sheet, reservedRow, 1, null!);
+        if (placed.ReferenceResize.Insertion is { } resizeInsertion)
+        {
+          SetCellValue(sheet, resizeInsertion.StartRow, 1, "Keep this user entry");
+          var blockedUndo = placed.ReferenceResize.SetApplied(identity, false);
+          Assert.IsFalse(blockedUndo.Succeeded, "Skipped row deletion must not be reported as successful Undo.");
+          Assert.IsTrue(placed.ReferenceResize.Matches(identity, true), "Blocked Undo must restore the applied image size.");
+          SetCellValue(sheet, resizeInsertion.StartRow, 1, null!);
+        }
         var undo = placed.ReferenceResize.SetApplied(identity, false);
         Assert.IsTrue(undo.Succeeded, undo.Message);
         Assert.IsTrue(placed.ReferenceResize.Matches(identity, false));

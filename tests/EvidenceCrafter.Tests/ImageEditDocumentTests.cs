@@ -64,6 +64,29 @@ public sealed class ImageEditDocumentTests
   }
 
   [TestMethod]
+  public void TextOnlyHistory_ReusesRasterUntilPixelsChange()
+  {
+    using var source = new Bitmap(800, 600);
+    using var document = new ImageEditDocument(source);
+    var raster = document.CurrentImage;
+
+    Assert.IsTrue(document.DrawText("label", new Point(10, 10)));
+    Assert.AreSame(raster, document.CurrentImage);
+    Assert.IsTrue(document.TryGetTextAt(new Point(10, 10), out var id));
+    Assert.IsTrue(document.MoveText(id, new Point(100, 100)));
+    Assert.AreSame(raster, document.CurrentImage);
+    Assert.IsTrue(document.UpdateText(id, "updated"));
+    Assert.AreSame(raster, document.CurrentImage);
+    Assert.IsTrue(document.DeleteText(id));
+    Assert.AreSame(raster, document.CurrentImage);
+    Assert.IsTrue(document.Undo());
+    Assert.AreSame(raster, document.CurrentImage);
+
+    Assert.IsTrue(document.DrawRectangle(new Rectangle(20, 20, 100, 80)));
+    Assert.AreNotSame(raster, document.CurrentImage);
+  }
+
+  [TestMethod]
   public void Mosaic_ProducesUniformBlocksWithinSelection()
   {
     using var source = new Bitmap(8, 8);

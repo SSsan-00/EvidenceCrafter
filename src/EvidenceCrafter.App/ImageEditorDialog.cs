@@ -117,7 +117,7 @@ internal sealed class ImageEditorDialog : Form
     {
       if (!document.TryGetTextAnnotation(annotationId, out var annotation)) return;
       using var dialog = new ImageTextInputDialog(annotation.Text, rainbowBackgroundMode) { TopMost = TopMost };
-      if (dialog.ShowDialog(this) == DialogResult.OK) document.UpdateText(annotationId, dialog.EnteredText);
+      if (ShowModalDialog(dialog) == DialogResult.OK) document.UpdateText(annotationId, dialog.EnteredText);
     };
 
     var statusStrip = new StatusStrip
@@ -266,7 +266,7 @@ internal sealed class ImageEditorDialog : Form
   private void CanvasTextRequested(object? sender, ImageTextRequestedEventArgs eventArgs)
   {
     using var dialog = new ImageTextInputDialog(rainbowBackgroundMode: rainbowBackgroundMode) { TopMost = TopMost };
-    if (dialog.ShowDialog(this) == DialogResult.OK)
+    if (ShowModalDialog(dialog) == DialogResult.OK)
     {
       document.DrawText(dialog.EnteredText, eventArgs.ImageLocation, canvas.DrawingColor);
     }
@@ -292,7 +292,7 @@ internal sealed class ImageEditorDialog : Form
       AnyColor = true,
       CustomColors = customColors.ToArray(),
     };
-    var result = dialog.ShowDialog(this);
+    var result = ShowModalDialog(dialog);
     customColors = dialog.CustomColors.Take(16).ToArray();
     if (result != DialogResult.OK)
     {
@@ -320,6 +320,30 @@ internal sealed class ImageEditorDialog : Form
       MessageBoxDefaultButton.Button2) != DialogResult.Yes)
     {
       eventArgs.Cancel = true;
+    }
+  }
+
+  private DialogResult ShowModalDialog(Form dialog)
+    => ShowModalDialog(() => dialog.ShowDialog(this));
+
+  private DialogResult ShowModalDialog(CommonDialog dialog)
+    => ShowModalDialog(() => dialog.ShowDialog(this));
+
+  private DialogResult ShowModalDialog(Func<DialogResult> show)
+  {
+    var resumeAnimation = rainbowAnimationTimer.Enabled;
+    rainbowAnimationTimer.Stop();
+    try
+    {
+      return show();
+    }
+    finally
+    {
+      if (resumeAnimation && Visible &&
+        rainbowBackgroundMode is RainbowBackgroundMode.Animated or RainbowBackgroundMode.ThemeAnimated)
+      {
+        rainbowAnimationTimer.Start();
+      }
     }
   }
 

@@ -10,7 +10,7 @@ internal sealed class ImageEditDocument : IDisposable
   private readonly List<ImageState> undoStates = [];
   private readonly List<ImageState> redoStates = [];
   private IReadOnlyList<TextAnnotation> textAnnotations = [];
-  private Bitmap current;
+  private SharedBitmap current;
   private int currentStateId;
   private int nextStateId = 1;
   private bool disposed;
@@ -24,7 +24,7 @@ internal sealed class ImageEditDocument : IDisposable
     }
 
     original = CopyBitmap(image);
-    current = CopyBitmap(image);
+    current = new SharedBitmap(CopyBitmap(image));
   }
 
   public event EventHandler? Changed;
@@ -34,7 +34,7 @@ internal sealed class ImageEditDocument : IDisposable
     get
     {
       ObjectDisposedException.ThrowIf(disposed, this);
-      return current.Width;
+      return current.Bitmap.Width;
     }
   }
 
@@ -43,7 +43,7 @@ internal sealed class ImageEditDocument : IDisposable
     get
     {
       ObjectDisposedException.ThrowIf(disposed, this);
-      return current.Height;
+      return current.Bitmap.Height;
     }
   }
 
@@ -58,7 +58,7 @@ internal sealed class ImageEditDocument : IDisposable
     get
     {
       ObjectDisposedException.ThrowIf(disposed, this);
-      return current;
+      return current.Bitmap;
     }
   }
 
@@ -119,7 +119,7 @@ internal sealed class ImageEditDocument : IDisposable
     }
 
     var annotation = CreateTextAnnotation(Guid.NewGuid(), text.Trim(), location, color ?? Color.Red);
-    Commit(CopyBitmap(current), nextStateId++, [.. textAnnotations, annotation]);
+    CommitText(nextStateId++, [.. textAnnotations, annotation]);
     return true;
   }
 
@@ -200,7 +200,7 @@ internal sealed class ImageEditDocument : IDisposable
 
     var nextAnnotations = textAnnotations.ToList();
     nextAnnotations[index] = moved;
-    Commit(CopyBitmap(current), nextStateId++, nextAnnotations);
+    CommitText(nextStateId++, nextAnnotations);
     return true;
   }
 
@@ -212,7 +212,7 @@ internal sealed class ImageEditDocument : IDisposable
 
     var nextAnnotations = textAnnotations.ToList();
     nextAnnotations[index] = resized;
-    Commit(CopyBitmap(current), nextStateId++, nextAnnotations);
+    CommitText(nextStateId++, nextAnnotations);
     return true;
   }
 
@@ -221,14 +221,14 @@ internal sealed class ImageEditDocument : IDisposable
     if (string.IsNullOrWhiteSpace(text) || !TryGetTextAnnotation(annotationId, out var existing) || existing.Text == text.Trim()) return false;
     var updated = CreateTextAnnotation(existing.Id, text.Trim(), existing.Location, existing.Color, existing.FontSize)
       with { MaskedRegions = existing.MaskedRegions };
-    Commit(CopyBitmap(current), nextStateId++, textAnnotations.Select(item => item.Id == annotationId ? updated : item).ToArray());
+    CommitText(nextStateId++, textAnnotations.Select(item => item.Id == annotationId ? updated : item).ToArray());
     return true;
   }
 
   public bool DeleteText(Guid annotationId)
   {
     if (!TryGetTextAnnotation(annotationId, out _)) return false;
-    Commit(CopyBitmap(current), nextStateId++, textAnnotations.Where(item => item.Id != annotationId).ToArray());
+    CommitText(nextStateId++, textAnnotations.Where(item => item.Id != annotationId).ToArray());
     return true;
   }
 
@@ -265,7 +265,7 @@ internal sealed class ImageEditDocument : IDisposable
     }
 
     using var rendered = RenderCurrent();
-    var next = CopyBitmap(current);
+    var next = CopyBitmap(current.Bitmap);
     try
     {
       var sampleWidth = Math.Max(1, (int)Math.Ceiling(clipped.Width / (double)blockSize));
@@ -306,14 +306,14 @@ internal sealed class ImageEditDocument : IDisposable
 
     ObjectDisposedException.ThrowIf(disposed, this);
     var cropped = new Bitmap(clipped.Width, clipped.Height, PixelFormat.Format32bppPArgb);
-    PreserveResolution(current, cropped);
+    PreserveResolution(current.Bitmap, cropped);
     try
     {
       using (var graphics = Graphics.FromImage(cropped))
       {
         graphics.CompositingMode = CompositingMode.SourceCopy;
         graphics.DrawImage(
-          current,
+          current.Bitmap,
           new Rectangle(0, 0, cropped.Width, cropped.Height),
           clipped,
           GraphicsUnit.Pixel);
@@ -344,8 +344,9 @@ internal sealed class ImageEditDocument : IDisposable
       return false;
     }
 
-    redoStates.Add(new ImageState(current, currentStateId, textAnnotations));
+    redoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations));
     var previous = TakeLast(undoStates);
+    current.Release();
     current = previous.Bitmap;
     currentStateId = previous.StateId;
     textAnnotations = previous.TextAnnotations;
@@ -361,8 +362,9 @@ internal sealed class ImageEditDocument : IDisposable
       return false;
     }
 
-    undoStates.Add(new ImageState(current, currentStateId, textAnnotations));
+    undoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations));
     var next = TakeLast(redoStates);
+    current.Release();
     current = next.Bitmap;
     currentStateId = next.StateId;
     textAnnotations = next.TextAnnotations;
@@ -390,7 +392,7 @@ internal sealed class ImageEditDocument : IDisposable
     }
 
     disposed = true;
-    current.Dispose();
+    current.Release();
     original.Dispose();
     DisposeStates(undoStates);
     DisposeStates(redoStates);
@@ -408,7 +410,7 @@ internal sealed class ImageEditDocument : IDisposable
   {
     foreach (var state in states)
     {
-      state.Bitmap.Dispose();
+      state.Bitmap.Release();
     }
 
     states.Clear();
@@ -436,14 +438,14 @@ internal sealed class ImageEditDocument : IDisposable
   }
 
   private Point Clamp(Point point) => new(
-    Math.Clamp(point.X, 0, current.Width - 1),
-    Math.Clamp(point.Y, 0, current.Height - 1));
+    Math.Clamp(point.X, 0, current.Bitmap.Width - 1),
+    Math.Clamp(point.Y, 0, current.Bitmap.Height - 1));
 
   private bool TryClip(Rectangle bounds, out Rectangle clipped)
   {
     ObjectDisposedException.ThrowIf(disposed, this);
     var normalized = Normalize(bounds);
-    clipped = Rectangle.Intersect(normalized, new Rectangle(Point.Empty, current.Size));
+    clipped = Rectangle.Intersect(normalized, new Rectangle(Point.Empty, current.Bitmap.Size));
     return clipped.Width > 0 && clipped.Height > 0;
   }
 
@@ -459,7 +461,7 @@ internal sealed class ImageEditDocument : IDisposable
   private bool Edit(Action<Bitmap> draw, bool preserveTextAnnotations = false)
   {
     ObjectDisposedException.ThrowIf(disposed, this);
-    var next = preserveTextAnnotations ? CopyBitmap(current) : RenderCurrent();
+    var next = preserveTextAnnotations ? CopyBitmap(current.Bitmap) : RenderCurrent();
     try
     {
       draw(next);
@@ -475,7 +477,7 @@ internal sealed class ImageEditDocument : IDisposable
 
   private Bitmap RenderCurrent()
   {
-    var rendered = CopyBitmap(current);
+    var rendered = CopyBitmap(current.Bitmap);
     using var graphics = Graphics.FromImage(rendered);
     DrawTextAnnotations(graphics);
     return rendered;
@@ -484,11 +486,11 @@ internal sealed class ImageEditDocument : IDisposable
   private TextAnnotation CreateTextAnnotation(Guid id, string text, Point location, Color color, float? fontSize = null)
   {
     location = Clamp(location);
-    using var graphics = Graphics.FromImage(current);
+    using var graphics = Graphics.FromImage(current.Bitmap);
     using var font = CreateTextFont(fontSize);
     var measured = graphics.MeasureString(text, font);
-    var x = Math.Min(location.X, Math.Max(0F, current.Width - measured.Width - 6F));
-    var y = Math.Min(location.Y, Math.Max(0F, current.Height - measured.Height - 4F));
+    var x = Math.Min(location.X, Math.Max(0F, current.Bitmap.Width - measured.Width - 6F));
+    var y = Math.Min(location.Y, Math.Max(0F, current.Bitmap.Height - measured.Height - 4F));
     var bounds = new RectangleF(x, y, measured.Width + 6F, measured.Height + 4F);
     return new TextAnnotation(id, text, new Point((int)x, (int)y), color, bounds) { FontSize = font.Size };
   }
@@ -504,7 +506,7 @@ internal sealed class ImageEditDocument : IDisposable
       using var font = CreateTextFont(annotation.FontSize);
       using var background = new SolidBrush(Color.FromArgb(210, Color.White));
       using var foreground = new SolidBrush(annotation.Color);
-      using var border = new Pen(annotation.Color, Math.Max(1F, StrokeWidth(current) / 2F));
+      using var border = new Pen(annotation.Color, Math.Max(1F, StrokeWidth(current.Bitmap) / 2F));
       graphics.FillRectangle(background, annotation.Bounds);
       graphics.DrawRectangle(border, annotation.Bounds.X, annotation.Bounds.Y, annotation.Bounds.Width, annotation.Bounds.Height);
       graphics.DrawString(annotation.Text, font, foreground, annotation.Bounds.X + 3F, annotation.Bounds.Y + 2F);
@@ -515,32 +517,64 @@ internal sealed class ImageEditDocument : IDisposable
   private Font CreateTextFont(float? size = null) => new(
     FontFamily.GenericSansSerif,
     Math.Clamp(
-      size ?? Math.Max(12F, Math.Min(current.Width, current.Height) / 25F),
+      size ?? Math.Max(12F, Math.Min(current.Bitmap.Width, current.Bitmap.Height) / 25F),
       8F,
-      Math.Max(12F, Math.Min(current.Width, current.Height) / 2F)),
+      Math.Max(12F, Math.Min(current.Bitmap.Width, current.Bitmap.Height) / 2F)),
     FontStyle.Bold,
     GraphicsUnit.Pixel);
 
   private void Commit(Bitmap next, int stateId, IReadOnlyList<TextAnnotation> nextTextAnnotations)
   {
-    undoStates.Add(new ImageState(current, currentStateId, textAnnotations));
-    if (undoStates.Count > HistoryLimit)
-    {
-      undoStates[0].Bitmap.Dispose();
-      undoStates.RemoveAt(0);
-    }
-
+    PushUndoState();
     DisposeStates(redoStates);
-    current = next;
+    current.Release();
+    current = new SharedBitmap(next);
     currentStateId = stateId;
     textAnnotations = nextTextAnnotations;
     Changed?.Invoke(this, EventArgs.Empty);
   }
 
+  private void CommitText(int stateId, IReadOnlyList<TextAnnotation> nextTextAnnotations)
+  {
+    PushUndoState();
+    DisposeStates(redoStates);
+    currentStateId = stateId;
+    textAnnotations = nextTextAnnotations;
+    Changed?.Invoke(this, EventArgs.Empty);
+  }
+
+  private void PushUndoState()
+  {
+    undoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations));
+    if (undoStates.Count > HistoryLimit)
+    {
+      undoStates[0].Bitmap.Release();
+      undoStates.RemoveAt(0);
+    }
+  }
+
   private sealed record ImageState(
-    Bitmap Bitmap,
+    SharedBitmap Bitmap,
     int StateId,
     IReadOnlyList<TextAnnotation> TextAnnotations);
+
+  private sealed class SharedBitmap(Bitmap bitmap)
+  {
+    private int references = 1;
+
+    public Bitmap Bitmap { get; } = bitmap;
+
+    public SharedBitmap Retain()
+    {
+      references++;
+      return this;
+    }
+
+    public void Release()
+    {
+      if (--references == 0) Bitmap.Dispose();
+    }
+  }
 }
 
 internal sealed record TextAnnotation(

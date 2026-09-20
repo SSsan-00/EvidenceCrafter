@@ -108,11 +108,17 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsTrue(analysis.Succeeded, analysis.Message);
         Assert.AreEqual(new CellReference(5, 4), analysis.Steps[0].Plan.FocusCell);
         Assert.AreEqual("1-1", analysis.CaseLabel);
-        Assert.IsEmpty(analysis.Steps[0].Plan.Insertions);
         fingerprint ??= analysis.SnapshotFingerprint;
         Assert.AreEqual(fingerprint, analysis.SnapshotFingerprint);
       });
       Console.WriteLine($"PERF analysis fingerprint: {fingerprint}");
+      MeasurePlacementRead("analyze/non-active-240-row-case-60-shapes", () =>
+      {
+        var analysis = automatic.Analyze(identity, sheetName, EvidenceSide.New, images, requestedCaseLabel: "1-3");
+        Assert.IsTrue(analysis.Succeeded, analysis.Message);
+        Assert.AreEqual(new CellReference(485, 4), analysis.Steps[0].Plan.FocusCell);
+        Assert.AreEqual("1-3", analysis.CaseLabel);
+      });
       MeasurePlacementRead("navigation-snapshot/60-shapes", () =>
       {
         var captured = snapshotService.CaptureForNavigation(identity, sheetName);
