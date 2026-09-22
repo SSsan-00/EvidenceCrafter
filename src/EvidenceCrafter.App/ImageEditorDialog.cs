@@ -203,7 +203,7 @@ internal sealed class ImageEditorDialog : Form
       return true;
     }
     if (keyData == Keys.Escape && canvas.CancelDrag()) return true;
-    if (keyData == Keys.Delete && canvas.DeleteSelectedText()) return true;
+    if (keyData == Keys.Delete && canvas.DeleteSelectedObject()) return true;
     if (keyData == Keys.F2 && canvas.EditSelectedText()) return true;
     if (keyData == (Keys.Control | Keys.Z))
     {
@@ -349,7 +349,7 @@ internal sealed class ImageEditorDialog : Form
 
   private static string InstructionFor(ImageEditorTool tool) => tool switch
   {
-    ImageEditorTool.Rectangle => "ドラッグした範囲へ枠を追加します。",
+    ImageEditorTool.Rectangle => "枠を追加します。既存の枠はドラッグで移動、ハンドルで拡大縮小できます。",
     ImageEditorTool.Arrow => "矢印の始点から終点までドラッグします。",
     ImageEditorTool.Text => "クリックした位置にテキストを追加します。Shift+Enterで中央に追加します。",
     ImageEditorTool.Mosaic => "隠したい範囲をドラッグします。",
@@ -377,12 +377,19 @@ internal sealed class ImageEditorCanvas : Control
   private Guid? selectedTextId;
   private Guid? movingTextId;
   private Guid? resizingTextId;
+  private Guid? selectedRectangleId;
+  private Guid? movingRectangleId;
+  private Guid? resizingRectangleId;
   private Point textDragStartImage;
   private Point textOriginalLocation;
   private Point textPreviewLocation;
   private RectangleF textOriginalBounds;
   private float textOriginalFontSize;
   private float textPreviewFontSize;
+  private Point rectangleDragStartImage;
+  private Rectangle rectangleOriginalBounds;
+  private Rectangle rectanglePreviewBounds;
+  private ResizeCorner rectangleResizeCorner;
   private bool textDragThresholdPassed;
   private bool dragging;
 
@@ -395,7 +402,7 @@ internal sealed class ImageEditorCanvas : Control
     SetStyle(ControlStyles.ResizeRedraw, true);
     SetStyle(ControlStyles.Selectable, true);
     TabStop = true;
-    AccessibleDescription = "テキストを選択後、F2またはダブルクリックで編集、×で削除。ドラッグで移動、右下のハンドルで拡大縮小。";
+    AccessibleDescription = "テキストまたは枠をドラッグで移動、ハンドルで拡大縮小、×で削除できます。";
   }
 
   public event EventHandler<ImageTextRequestedEventArgs>? TextRequested;
@@ -422,16 +429,28 @@ internal sealed class ImageEditorCanvas : Control
     eventArgs.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
     eventArgs.Graphics.DrawImage(document.CurrentImage, imageBounds);
 
-    TextAnnotation? preview = null;
+    TextAnnotation? textPreview = null;
     if (movingTextId is Guid movingId &&
-      !document.TryGetMovedTextAnnotation(movingId, textPreviewLocation, out preview))
+      !document.TryGetMovedTextAnnotation(movingId, textPreviewLocation, out textPreview))
     {
       movingTextId = null;
     }
     else if (resizingTextId is Guid resizingId &&
-      !document.TryGetResizedTextAnnotation(resizingId, textPreviewFontSize, out preview))
+      !document.TryGetResizedTextAnnotation(resizingId, textPreviewFontSize, out textPreview))
     {
       resizingTextId = null;
+    }
+
+    RectangleAnnotation? rectanglePreview = null;
+    if (movingRectangleId is Guid movingRectangle &&
+      !document.TryGetMovedRectangleAnnotation(movingRectangle, rectanglePreviewBounds.Location, out rectanglePreview))
+    {
+      movingRectangleId = null;
+    }
+    else if (resizingRectangleId is Guid resizingRectangle &&
+      !document.TryGetResizedRectangleAnnotation(resizingRectangle, rectanglePreviewBounds, out rectanglePreview))
+    {
+      resizingRectangleId = null;
     }
 
     var savedState = eventArgs.Graphics.Save();
@@ -439,8 +458,9 @@ internal sealed class ImageEditorCanvas : Control
     eventArgs.Graphics.ScaleTransform(
       imageBounds.Width / (float)document.Width,
       imageBounds.Height / (float)document.Height);
-    document.DrawTextAnnotations(eventArgs.Graphics, movingTextId ?? resizingTextId, preview);
-    DrawSelectedTextBounds(eventArgs.Graphics, preview);
+    document.DrawRectangleAnnotations(eventArgs.Graphics, movingRectangleId ?? resizingRectangleId, rectanglePreview);
+    document.DrawTextAnnotations(eventArgs.Graphics, movingTextId ?? resizingTextId, textPreview);
+    DrawSelectedObjectBounds(eventArgs.Graphics, textPreview, rectanglePreview);
     eventArgs.Graphics.Restore(savedState);
     var deleteBounds = GetDeleteBounds();
     if (!deleteBounds.IsEmpty)
@@ -450,15 +470,15 @@ internal sealed class ImageEditorCanvas : Control
       TextRenderer.DrawText(eventArgs.Graphics, "×", Font, deleteBounds, Color.White,
         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
     }
-    var resizeBounds = GetResizeBounds();
-    if (!resizeBounds.IsEmpty)
+    foreach (var resizeBounds in GetResizeHandles())
     {
       using var brush = new SolidBrush(Color.DeepSkyBlue);
       eventArgs.Graphics.FillRectangle(brush, resizeBounds);
       eventArgs.Graphics.DrawRectangle(Pens.White, resizeBounds);
     }
 
-    if (!dragging || movingTextId is not null || resizingTextId is not null || Tool is ImageEditorTool.Text)
+    if (!dragging || movingTextId is not null || resizingTextId is not null ||
+      movingRectangleId is not null || resizingRectangleId is not null || Tool is ImageEditorTool.Text)
     {
       return;
     }
@@ -488,16 +508,15 @@ internal sealed class ImageEditorCanvas : Control
   {
     base.OnMouseDown(eventArgs);
     Focus();
-    if (eventArgs.Button == MouseButtons.Left && GetDeleteBounds().Contains(eventArgs.Location) && selectedTextId is Guid deleteId)
+    if (eventArgs.Button == MouseButtons.Left && GetDeleteBounds().Contains(eventArgs.Location))
     {
-      document.DeleteText(deleteId);
-      selectedTextId = null;
-      Invalidate();
+      DeleteSelectedObject();
       return;
     }
-    if (eventArgs.Button == MouseButtons.Left && GetResizeBounds().Contains(eventArgs.Location))
+    if (eventArgs.Button == MouseButtons.Left && TryGetResizeCorner(eventArgs.Location, out var resizeCorner))
     {
-      BeginTextResize();
+      if (selectedRectangleId is not null) BeginRectangleResize(resizeCorner);
+      else BeginTextResize();
       return;
     }
     if (eventArgs.Button != MouseButtons.Left || !GetImageBounds().Contains(eventArgs.Location))
@@ -508,6 +527,7 @@ internal sealed class ImageEditorCanvas : Control
     if (document.TryGetTextAt(ToImagePoint(eventArgs.Location), out var textId))
     {
       selectedTextId = textId;
+      selectedRectangleId = null;
       if (eventArgs.Clicks == 2)
       {
         CancelDrag();
@@ -517,7 +537,15 @@ internal sealed class ImageEditorCanvas : Control
       else BeginTextMove(eventArgs.Location);
       return;
     }
+    if (document.TryGetRectangleAt(ToImagePoint(eventArgs.Location), out var rectangleId))
+    {
+      selectedRectangleId = rectangleId;
+      selectedTextId = null;
+      BeginRectangleMove(eventArgs.Location);
+      return;
+    }
     selectedTextId = null;
+    selectedRectangleId = null;
     if (Tool == ImageEditorTool.Text)
     {
       // MouseDown runs while WinForms owns mouse capture. Release it before
@@ -539,10 +567,11 @@ internal sealed class ImageEditorCanvas : Control
     base.OnMouseMove(eventArgs);
     if (!dragging)
     {
-      Cursor = GetResizeBounds().Contains(eventArgs.Location)
-        ? Cursors.SizeNWSE
+      Cursor = TryGetResizeCorner(eventArgs.Location, out var resizeCorner)
+        ? resizeCorner is ResizeCorner.TopRight or ResizeCorner.BottomLeft ? Cursors.SizeNESW : Cursors.SizeNWSE
         : GetImageBounds().Contains(eventArgs.Location) &&
-          document.TryGetTextAt(ToImagePoint(eventArgs.Location), out _)
+          (document.TryGetTextAt(ToImagePoint(eventArgs.Location), out _) ||
+           document.TryGetRectangleAt(ToImagePoint(eventArgs.Location), out _))
           ? Cursors.SizeAll
           : Cursors.Cross;
       return;
@@ -571,6 +600,27 @@ internal sealed class ImageEditorCanvas : Control
       return;
     }
 
+    if (resizingRectangleId is not null)
+    {
+      var point = ToImagePoint(ClampToImageBounds(eventArgs.Location));
+      rectanglePreviewBounds = ResizeRectangle(rectangleOriginalBounds, point, rectangleResizeCorner);
+      Invalidate();
+      return;
+    }
+
+    if (movingRectangleId is not null)
+    {
+      var current = ToImagePoint(ClampToImageBounds(eventArgs.Location));
+      rectanglePreviewBounds = rectangleOriginalBounds;
+      rectanglePreviewBounds.Location = new Point(
+        Math.Clamp(rectangleOriginalBounds.X + current.X - rectangleDragStartImage.X,
+          0, document.Width - rectangleOriginalBounds.Width),
+        Math.Clamp(rectangleOriginalBounds.Y + current.Y - rectangleDragStartImage.Y,
+          0, document.Height - rectangleOriginalBounds.Height));
+      Invalidate();
+      return;
+    }
+
     dragCurrentClient = ClampToImageBounds(eventArgs.Location);
     Invalidate();
   }
@@ -585,6 +635,8 @@ internal sealed class ImageEditorCanvas : Control
 
     if (movingTextId is not null) OnMouseMove(eventArgs);
     if (resizingTextId is not null) OnMouseMove(eventArgs);
+    if (movingRectangleId is not null) OnMouseMove(eventArgs);
+    if (resizingRectangleId is not null) OnMouseMove(eventArgs);
     dragCurrentClient = ClampToImageBounds(eventArgs.Location);
     dragging = false;
     Capture = false;
@@ -599,6 +651,20 @@ internal sealed class ImageEditorCanvas : Control
     {
       resizingTextId = null;
       document.ResizeText(resizingId, textPreviewFontSize);
+      Invalidate();
+      return;
+    }
+    if (movingRectangleId is Guid movingRectangle)
+    {
+      movingRectangleId = null;
+      document.MoveRectangle(movingRectangle, rectanglePreviewBounds.Location);
+      Invalidate();
+      return;
+    }
+    if (resizingRectangleId is Guid resizingRectangle)
+    {
+      resizingRectangleId = null;
+      document.ResizeRectangle(resizingRectangle, rectanglePreviewBounds);
       Invalidate();
       return;
     }
@@ -618,6 +684,10 @@ internal sealed class ImageEditorCanvas : Control
     {
       ActionRejected?.Invoke(this, "編集範囲を2ピクセル以上で指定してください。");
     }
+    else if (Tool == ImageEditorTool.Rectangle && document.TryGetRectangleAt(end, out var addedRectangle))
+    {
+      selectedRectangleId = addedRectangle;
+    }
 
     Invalidate();
   }
@@ -633,6 +703,8 @@ internal sealed class ImageEditorCanvas : Control
     dragging = false;
     movingTextId = null;
     resizingTextId = null;
+    movingRectangleId = null;
+    resizingRectangleId = null;
     Invalidate();
   }
 
@@ -647,7 +719,6 @@ internal sealed class ImageEditorCanvas : Control
       Invalidate();
       return;
     }
-
     selectedTextId = annotationId;
     movingTextId = annotationId;
     textDragThresholdPassed = false;
@@ -673,23 +744,55 @@ internal sealed class ImageEditorCanvas : Control
     Invalidate();
   }
 
+  private void BeginRectangleMove(Point clientLocation)
+  {
+    if (selectedRectangleId is not Guid id ||
+      !document.TryGetRectangleAnnotation(id, out var annotation)) return;
+    movingRectangleId = id;
+    resizingRectangleId = null;
+    rectangleDragStartImage = ToImagePoint(clientLocation);
+    rectangleOriginalBounds = annotation.Bounds;
+    rectanglePreviewBounds = annotation.Bounds;
+    dragging = true;
+    Capture = true;
+    Invalidate();
+  }
+
+  private void BeginRectangleResize(ResizeCorner corner)
+  {
+    if (selectedRectangleId is not Guid id ||
+      !document.TryGetRectangleAnnotation(id, out var annotation)) return;
+    resizingRectangleId = id;
+    movingRectangleId = null;
+    rectangleResizeCorner = corner;
+    rectangleOriginalBounds = annotation.Bounds;
+    rectanglePreviewBounds = annotation.Bounds;
+    dragging = true;
+    Capture = true;
+    Invalidate();
+  }
+
   internal bool CancelDrag()
   {
     if (!dragging) return false;
     dragging = false;
     movingTextId = null;
     resizingTextId = null;
+    movingRectangleId = null;
+    resizingRectangleId = null;
     Capture = false;
     Invalidate();
     return true;
   }
 
-  internal bool DeleteSelectedText()
+  internal bool DeleteSelectedObject()
   {
-    if (selectedTextId is not Guid id) return false;
     CancelDrag();
+    var deleted = selectedTextId is Guid textId
+      ? document.DeleteText(textId)
+      : selectedRectangleId is Guid rectangleId && document.DeleteRectangle(rectangleId);
     selectedTextId = null;
-    var deleted = document.DeleteText(id);
+    selectedRectangleId = null;
     Invalidate();
     return deleted;
   }
@@ -704,22 +807,64 @@ internal sealed class ImageEditorCanvas : Control
 
   private Rectangle GetDeleteBounds()
   {
-    if (!TryGetSelectedTextPreview(out var annotation)) return Rectangle.Empty;
+    if (!TryGetSelectedBounds(out var bounds)) return Rectangle.Empty;
     var image = GetImageBounds();
     var size = Math.Max(20, (int)(22 * DeviceDpi / 96F));
-    var x = image.X + (int)(annotation.Bounds.Right * image.Width / document.Width);
-    var y = image.Y + (int)(annotation.Bounds.Top * image.Height / document.Height) - size;
+    var x = image.X + (int)(bounds.Right * image.Width / document.Width);
+    var y = image.Y + (int)(bounds.Top * image.Height / document.Height) - size;
     return new Rectangle(Math.Clamp(x, 0, Math.Max(0, Width - size)), Math.Clamp(y, 0, Math.Max(0, Height - size)), size, size);
   }
 
   private Rectangle GetResizeBounds()
   {
-    if (!TryGetSelectedTextPreview(out var annotation)) return Rectangle.Empty;
+    if (!TryGetSelectedBounds(out var bounds)) return Rectangle.Empty;
     var image = GetImageBounds();
     var size = Math.Max(10, (int)(12 * DeviceDpi / 96F));
-    var x = image.X + (int)(annotation.Bounds.Right * image.Width / document.Width) - size / 2;
-    var y = image.Y + (int)(annotation.Bounds.Bottom * image.Height / document.Height) - size / 2;
+    var x = image.X + (int)(bounds.Right * image.Width / document.Width) - size / 2;
+    var y = image.Y + (int)(bounds.Bottom * image.Height / document.Height) - size / 2;
     return new Rectangle(Math.Clamp(x, 0, Math.Max(0, Width - size)), Math.Clamp(y, 0, Math.Max(0, Height - size)), size, size);
+  }
+
+  private IReadOnlyList<Rectangle> GetResizeHandles()
+  {
+    if (!TryGetSelectedBounds(out var bounds)) return [];
+    if (selectedRectangleId is null) return [GetResizeBounds()];
+    return Enum.GetValues<ResizeCorner>().Select(corner => GetRectangleResizeHandle(bounds, corner)).ToArray();
+  }
+
+  private bool TryGetResizeCorner(Point location, out ResizeCorner corner)
+  {
+    if (selectedRectangleId is null)
+    {
+      corner = ResizeCorner.BottomRight;
+      return GetResizeBounds().Contains(location);
+    }
+    if (TryGetSelectedBounds(out var bounds))
+    {
+      foreach (var candidate in Enum.GetValues<ResizeCorner>())
+      {
+        if (GetRectangleResizeHandle(bounds, candidate).Contains(location))
+        {
+          corner = candidate;
+          return true;
+        }
+      }
+    }
+    corner = default;
+    return false;
+  }
+
+  private Rectangle GetRectangleResizeHandle(RectangleF bounds, ResizeCorner corner)
+  {
+    var image = GetImageBounds();
+    var size = Math.Max(10, (int)(12 * DeviceDpi / 96F));
+    var x = corner is ResizeCorner.TopLeft or ResizeCorner.BottomLeft ? bounds.Left : bounds.Right;
+    var y = corner is ResizeCorner.TopLeft or ResizeCorner.TopRight ? bounds.Top : bounds.Bottom;
+    return new Rectangle(
+      Math.Clamp(image.X + (int)(x * image.Width / document.Width) - size / 2, 0, Math.Max(0, Width - size)),
+      Math.Clamp(image.Y + (int)(y * image.Height / document.Height) - size / 2, 0, Math.Max(0, Height - size)),
+      size,
+      size);
   }
 
   private bool TryGetSelectedTextPreview(out TextAnnotation annotation)
@@ -731,25 +876,66 @@ internal sealed class ImageEditorCanvas : Control
     return true;
   }
 
-  private void DrawSelectedTextBounds(Graphics graphics, TextAnnotation? preview)
+  private bool TryGetSelectedRectanglePreview(out RectangleAnnotation annotation)
   {
-    if (selectedTextId is not Guid selectedId)
-    {
-      return;
-    }
+    annotation = default!;
+    if (selectedRectangleId is not Guid id || !document.TryGetRectangleAnnotation(id, out annotation)) return false;
+    if (movingRectangleId == id &&
+      document.TryGetMovedRectangleAnnotation(id, rectanglePreviewBounds.Location, out var moved)) annotation = moved;
+    else if (resizingRectangleId == id &&
+      document.TryGetResizedRectangleAnnotation(id, rectanglePreviewBounds, out var resized)) annotation = resized;
+    return true;
+  }
 
-    TextAnnotation? selected = preview?.Id == selectedId ? preview : null;
-    if (selected is null && !document.TryGetTextAnnotation(selectedId, out selected))
+  private bool TryGetSelectedBounds(out RectangleF bounds)
+  {
+    if (TryGetSelectedTextPreview(out var text))
     {
-      selectedTextId = null;
-      return;
+      bounds = text.Bounds;
+      return true;
     }
+    if (TryGetSelectedRectanglePreview(out var rectangle))
+    {
+      bounds = rectangle.Bounds;
+      return true;
+    }
+    bounds = RectangleF.Empty;
+    return false;
+  }
+
+  private void DrawSelectedObjectBounds(
+    Graphics graphics,
+    TextAnnotation? textPreview,
+    RectangleAnnotation? rectanglePreview)
+  {
+    RectangleF bounds;
+    if (selectedTextId is Guid selectedText)
+    {
+      TextAnnotation? selected = textPreview?.Id == selectedText ? textPreview : null;
+      if (selected is null && !document.TryGetTextAnnotation(selectedText, out selected))
+      {
+        selectedTextId = null;
+        return;
+      }
+      bounds = selected.Bounds;
+    }
+    else if (selectedRectangleId is Guid selectedRectangle)
+    {
+      RectangleAnnotation? selected = rectanglePreview?.Id == selectedRectangle ? rectanglePreview : null;
+      if (selected is null && !document.TryGetRectangleAnnotation(selectedRectangle, out selected))
+      {
+        selectedRectangleId = null;
+        return;
+      }
+      bounds = selected.Bounds;
+    }
+    else return;
 
     using var pen = new Pen(Color.DeepSkyBlue, Math.Max(1F, Math.Min(document.Width, document.Height) / 500F))
     {
       DashStyle = DashStyle.Dash,
     };
-    graphics.DrawRectangle(pen, selected.Bounds.X, selected.Bounds.Y, selected.Bounds.Width, selected.Bounds.Height);
+    graphics.DrawRectangle(pen, bounds.X, bounds.Y, bounds.Width, bounds.Height);
   }
 
   private Rectangle GetImageBounds()
@@ -799,6 +985,21 @@ internal sealed class ImageEditorCanvas : Control
     var bottom = Math.Max(first.Y, second.Y);
     return Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
   }
+
+  private static Rectangle ResizeRectangle(Rectangle original, Point point, ResizeCorner corner)
+  {
+    var left = corner is ResizeCorner.TopLeft or ResizeCorner.BottomLeft
+      ? Math.Min(point.X, original.Right - 2) : original.Left;
+    var top = corner is ResizeCorner.TopLeft or ResizeCorner.TopRight
+      ? Math.Min(point.Y, original.Bottom - 2) : original.Top;
+    var right = corner is ResizeCorner.TopRight or ResizeCorner.BottomRight
+      ? Math.Max(point.X + 1, original.Left + 2) : original.Right;
+    var bottom = corner is ResizeCorner.BottomLeft or ResizeCorner.BottomRight
+      ? Math.Max(point.Y + 1, original.Top + 2) : original.Bottom;
+    return Rectangle.FromLTRB(left, top, right, bottom);
+  }
+
+  private enum ResizeCorner { TopLeft, TopRight, BottomLeft, BottomRight }
 }
 
 internal sealed class ImageTextRequestedEventArgs(Point imageLocation) : EventArgs

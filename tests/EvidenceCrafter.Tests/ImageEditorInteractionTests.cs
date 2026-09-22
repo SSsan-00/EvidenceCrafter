@@ -146,6 +146,45 @@ public sealed class ImageEditorInteractionTests
     Assert.IsFalse(document.TryGetTextAnnotation(id, out _), "Cancelled dragging must not create a history entry.");
   });
 
+  [TestMethod]
+  public void Canvas_RectangleMovesResizesAndDeletes() => OnSta(() =>
+  {
+    using var bitmap = new Bitmap(400, 200);
+    using var document = new ImageEditDocument(bitmap);
+    Assert.IsTrue(document.DrawRectangle(new Rectangle(20, 20, 100, 60)));
+    Assert.IsTrue(document.TryGetRectangleAt(new Point(20, 40), out var id));
+    using var canvas = new ImageEditorCanvas(document) { Size = new Size(800, 500), Tool = ImageEditorTool.Rectangle };
+    var image = Invoke<Rectangle>(canvas, "GetImageBounds");
+    Point Client(Point point) => new(
+      image.Left + point.X * image.Width / document.Width,
+      image.Top + point.Y * image.Height / document.Height);
+
+    var start = Client(new Point(20, 40));
+    var finish = Client(new Point(100, 100));
+    Mouse(canvas, "OnMouseDown", start);
+    Mouse(canvas, "OnMouseMove", finish);
+    Mouse(canvas, "OnMouseUp", finish);
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out var moved));
+    Assert.IsTrue(Math.Abs(moved.Bounds.X - 100) <= 1 && Math.Abs(moved.Bounds.Y - 80) <= 1);
+
+    var originalSize = moved.Bounds.Size;
+    var resize = Invoke<Rectangle>(canvas, "GetResizeBounds");
+    var resizeStart = new Point(resize.Left + resize.Width / 2, resize.Top + resize.Height / 2);
+    var resizeEnd = new Point(resizeStart.X + 80, resizeStart.Y + 40);
+    Mouse(canvas, "OnMouseDown", resizeStart);
+    Mouse(canvas, "OnMouseMove", resizeEnd);
+    Mouse(canvas, "OnMouseUp", resizeEnd);
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out var resized));
+    Assert.IsGreaterThan(originalSize.Width, resized.Bounds.Width);
+    Assert.IsGreaterThan(originalSize.Height, resized.Bounds.Height);
+
+    var cross = Invoke<Rectangle>(canvas, "GetDeleteBounds");
+    Mouse(canvas, "OnMouseDown", new Point(cross.Left + 2, cross.Top + 2));
+    Assert.IsFalse(document.TryGetRectangleAnnotation(id, out _));
+    document.Undo();
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out _));
+  });
+
   private static void Mouse(ImageEditorCanvas canvas, string method, Point point, int clicks = 1) =>
     typeof(ImageEditorCanvas).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!
       .Invoke(canvas, [new MouseEventArgs(MouseButtons.Left, clicks, point.X, point.Y, 0)]);

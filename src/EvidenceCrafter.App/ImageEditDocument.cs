@@ -10,6 +10,7 @@ internal sealed class ImageEditDocument : IDisposable
   private readonly List<ImageState> undoStates = [];
   private readonly List<ImageState> redoStates = [];
   private IReadOnlyList<TextAnnotation> textAnnotations = [];
+  private IReadOnlyList<RectangleAnnotation> rectangleAnnotations = [];
   private SharedBitmap current;
   private int currentStateId;
   private int nextStateId = 1;
@@ -70,25 +71,14 @@ internal sealed class ImageEditDocument : IDisposable
 
   public bool DrawRectangle(Rectangle bounds, Color? color = null)
   {
-    if (!TryClip(bounds, out var clipped))
+    if (!TryClip(bounds, out var clipped) || clipped.Width < 2 || clipped.Height < 2)
     {
       return false;
     }
 
-    return Edit(next =>
-    {
-      using var graphics = Graphics.FromImage(next);
-      graphics.SmoothingMode = SmoothingMode.AntiAlias;
-      var stroke = StrokeWidth(next);
-      using var pen = new Pen(color ?? Color.Red, stroke);
-      var inset = stroke / 2F;
-      graphics.DrawRectangle(
-        pen,
-        clipped.X + inset,
-        clipped.Y + inset,
-        Math.Max(0F, clipped.Width - stroke),
-        Math.Max(0F, clipped.Height - stroke));
-    }, preserveTextAnnotations: true);
+    CommitAnnotations(nextStateId++, textAnnotations,
+      [.. rectangleAnnotations, new RectangleAnnotation(Guid.NewGuid(), clipped, color ?? Color.Red)]);
+    return true;
   }
 
   public bool DrawArrow(Point start, Point end, Color? color = null)
@@ -232,6 +222,108 @@ internal sealed class ImageEditDocument : IDisposable
     return true;
   }
 
+  public bool TryGetRectangleAt(Point location, out Guid annotationId)
+  {
+    ObjectDisposedException.ThrowIf(disposed, this);
+    var tolerance = Math.Max(4, (int)Math.Ceiling(StrokeWidth(current.Bitmap) * 2));
+    for (var index = rectangleAnnotations.Count - 1; index >= 0; index--)
+    {
+      var annotation = rectangleAnnotations[index];
+      if (annotation.MaskedRegions.Any(region => region.Contains(location))) continue;
+      var bounds = annotation.Bounds;
+      var outer = bounds;
+      outer.Inflate(tolerance, tolerance);
+      var inner = bounds;
+      inner.Inflate(-tolerance, -tolerance);
+      if (outer.Contains(location) && (inner.Width <= 0 || inner.Height <= 0 || !inner.Contains(location)))
+      {
+        annotationId = annotation.Id;
+        return true;
+      }
+    }
+
+    annotationId = Guid.Empty;
+    return false;
+  }
+
+  public bool TryGetRectangleAnnotation(Guid annotationId, out RectangleAnnotation annotation)
+  {
+    ObjectDisposedException.ThrowIf(disposed, this);
+    var existing = rectangleAnnotations.FirstOrDefault(item => item.Id == annotationId);
+    if (existing is null)
+    {
+      annotation = default!;
+      return false;
+    }
+
+    annotation = existing;
+    return true;
+  }
+
+  public bool TryGetMovedRectangleAnnotation(Guid annotationId, Point location, out RectangleAnnotation annotation)
+  {
+    if (!TryGetRectangleAnnotation(annotationId, out var existing))
+    {
+      annotation = default!;
+      return false;
+    }
+
+    var bounds = new Rectangle(
+      Math.Clamp(location.X, 0, Width - existing.Bounds.Width),
+      Math.Clamp(location.Y, 0, Height - existing.Bounds.Height),
+      existing.Bounds.Width,
+      existing.Bounds.Height);
+    annotation = existing with
+    {
+      Bounds = bounds,
+      MaskedRegions = existing.MaskedRegions.Select(region => new Rectangle(
+        region.X + bounds.X - existing.Bounds.X,
+        region.Y + bounds.Y - existing.Bounds.Y,
+        region.Width,
+        region.Height)).ToArray(),
+    };
+    return true;
+  }
+
+  public bool TryGetResizedRectangleAnnotation(Guid annotationId, Rectangle bounds, out RectangleAnnotation annotation)
+  {
+    if (!TryGetRectangleAnnotation(annotationId, out var existing) ||
+      !TryClip(bounds, out var clipped) || clipped.Width < 2 || clipped.Height < 2)
+    {
+      annotation = default!;
+      return false;
+    }
+
+    annotation = existing with { Bounds = clipped };
+    return true;
+  }
+
+  public bool MoveRectangle(Guid annotationId, Point location)
+  {
+    if (!TryGetMovedRectangleAnnotation(annotationId, location, out var moved) ||
+      moved.Bounds == rectangleAnnotations.First(item => item.Id == annotationId).Bounds) return false;
+    CommitAnnotations(nextStateId++, textAnnotations,
+      rectangleAnnotations.Select(item => item.Id == annotationId ? moved : item).ToArray());
+    return true;
+  }
+
+  public bool ResizeRectangle(Guid annotationId, Rectangle bounds)
+  {
+    if (!TryGetResizedRectangleAnnotation(annotationId, bounds, out var resized) ||
+      resized.Bounds == rectangleAnnotations.First(item => item.Id == annotationId).Bounds) return false;
+    CommitAnnotations(nextStateId++, textAnnotations,
+      rectangleAnnotations.Select(item => item.Id == annotationId ? resized : item).ToArray());
+    return true;
+  }
+
+  public bool DeleteRectangle(Guid annotationId)
+  {
+    if (!TryGetRectangleAnnotation(annotationId, out _)) return false;
+    CommitAnnotations(nextStateId++, textAnnotations,
+      rectangleAnnotations.Where(item => item.Id != annotationId).ToArray());
+    return true;
+  }
+
   internal void DrawTextAnnotations(
     Graphics graphics,
     Guid? excludedAnnotationId = null,
@@ -250,6 +342,20 @@ internal sealed class ImageEditDocument : IDisposable
     {
       DrawTextAnnotation(graphics, preview);
     }
+  }
+
+  internal void DrawRectangleAnnotations(
+    Graphics graphics,
+    Guid? excludedAnnotationId = null,
+    RectangleAnnotation? preview = null)
+  {
+    ObjectDisposedException.ThrowIf(disposed, this);
+    foreach (var annotation in rectangleAnnotations)
+    {
+      if (annotation.Id != excludedAnnotationId) DrawRectangleAnnotation(graphics, annotation);
+    }
+
+    if (preview is not null) DrawRectangleAnnotation(graphics, preview);
   }
 
   public bool Mosaic(Rectangle bounds, int blockSize = 12)
@@ -290,7 +396,9 @@ internal sealed class ImageEditDocument : IDisposable
       }
       // Bake only the masked area, and keep later text moves from uncovering it.
       Commit(next, nextStateId++, textAnnotations.Select(item => item with
-      { MaskedRegions = [.. item.MaskedRegions, clipped] }).ToArray());
+      { MaskedRegions = [.. item.MaskedRegions, clipped] }).ToArray(),
+        rectangleAnnotations.Select(item => item with
+        { MaskedRegions = [.. item.MaskedRegions, clipped] }).ToArray());
       next = null!;
       return true;
     }
@@ -326,7 +434,20 @@ internal sealed class ImageEditDocument : IDisposable
         MaskedRegions = item.MaskedRegions.Select(region => new Rectangle(
           region.X - clipped.X, region.Y - clipped.Y, region.Width, region.Height)).ToArray(),
       }).ToArray();
-      Commit(cropped, nextStateId++, annotations);
+      var rectangles = rectangleAnnotations
+        .Where(item => item.Bounds.IntersectsWith(clipped))
+        .Select(item =>
+        {
+          var bounds = Rectangle.Intersect(item.Bounds, clipped);
+          bounds.Offset(-clipped.X, -clipped.Y);
+          return item with
+          {
+            Bounds = bounds,
+            MaskedRegions = item.MaskedRegions.Select(region => new Rectangle(
+              region.X - clipped.X, region.Y - clipped.Y, region.Width, region.Height)).ToArray(),
+          };
+        }).ToArray();
+      Commit(cropped, nextStateId++, annotations, rectangles);
       cropped = null!;
       return true;
     }
@@ -344,12 +465,13 @@ internal sealed class ImageEditDocument : IDisposable
       return false;
     }
 
-    redoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations));
+    redoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations, rectangleAnnotations));
     var previous = TakeLast(undoStates);
     current.Release();
     current = previous.Bitmap;
     currentStateId = previous.StateId;
     textAnnotations = previous.TextAnnotations;
+    rectangleAnnotations = previous.RectangleAnnotations;
     Changed?.Invoke(this, EventArgs.Empty);
     return true;
   }
@@ -362,12 +484,13 @@ internal sealed class ImageEditDocument : IDisposable
       return false;
     }
 
-    undoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations));
+    undoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations, rectangleAnnotations));
     var next = TakeLast(redoStates);
     current.Release();
     current = next.Bitmap;
     currentStateId = next.StateId;
     textAnnotations = next.TextAnnotations;
+    rectangleAnnotations = next.RectangleAnnotations;
     Changed?.Invoke(this, EventArgs.Empty);
     return true;
   }
@@ -380,7 +503,7 @@ internal sealed class ImageEditDocument : IDisposable
       return false;
     }
 
-    Commit(CopyBitmap(original), 0, []);
+    Commit(CopyBitmap(original), 0, [], []);
     return true;
   }
 
@@ -465,7 +588,7 @@ internal sealed class ImageEditDocument : IDisposable
     try
     {
       draw(next);
-      Commit(next, nextStateId++, preserveTextAnnotations ? textAnnotations : []);
+      Commit(next, nextStateId++, preserveTextAnnotations ? textAnnotations : [], rectangleAnnotations);
       next = null!;
       return true;
     }
@@ -479,6 +602,7 @@ internal sealed class ImageEditDocument : IDisposable
   {
     var rendered = CopyBitmap(current.Bitmap);
     using var graphics = Graphics.FromImage(rendered);
+    DrawRectangleAnnotations(graphics);
     DrawTextAnnotations(graphics);
     return rendered;
   }
@@ -514,6 +638,25 @@ internal sealed class ImageEditDocument : IDisposable
     finally { graphics.Restore(state); }
   }
 
+  private void DrawRectangleAnnotation(Graphics graphics, RectangleAnnotation annotation)
+  {
+    var state = graphics.Save();
+    try
+    {
+      foreach (var region in annotation.MaskedRegions) graphics.ExcludeClip(region);
+      graphics.SmoothingMode = SmoothingMode.AntiAlias;
+      var stroke = StrokeWidth(current.Bitmap);
+      using var pen = new Pen(annotation.Color, stroke);
+      var inset = stroke / 2F;
+      graphics.DrawRectangle(pen,
+        annotation.Bounds.X + inset,
+        annotation.Bounds.Y + inset,
+        Math.Max(0F, annotation.Bounds.Width - stroke),
+        Math.Max(0F, annotation.Bounds.Height - stroke));
+    }
+    finally { graphics.Restore(state); }
+  }
+
   private Font CreateTextFont(float? size = null) => new(
     FontFamily.GenericSansSerif,
     Math.Clamp(
@@ -523,7 +666,11 @@ internal sealed class ImageEditDocument : IDisposable
     FontStyle.Bold,
     GraphicsUnit.Pixel);
 
-  private void Commit(Bitmap next, int stateId, IReadOnlyList<TextAnnotation> nextTextAnnotations)
+  private void Commit(
+    Bitmap next,
+    int stateId,
+    IReadOnlyList<TextAnnotation> nextTextAnnotations,
+    IReadOnlyList<RectangleAnnotation> nextRectangleAnnotations)
   {
     PushUndoState();
     DisposeStates(redoStates);
@@ -531,21 +678,29 @@ internal sealed class ImageEditDocument : IDisposable
     current = new SharedBitmap(next);
     currentStateId = stateId;
     textAnnotations = nextTextAnnotations;
+    rectangleAnnotations = nextRectangleAnnotations;
     Changed?.Invoke(this, EventArgs.Empty);
   }
 
   private void CommitText(int stateId, IReadOnlyList<TextAnnotation> nextTextAnnotations)
+    => CommitAnnotations(stateId, nextTextAnnotations, rectangleAnnotations);
+
+  private void CommitAnnotations(
+    int stateId,
+    IReadOnlyList<TextAnnotation> nextTextAnnotations,
+    IReadOnlyList<RectangleAnnotation> nextRectangleAnnotations)
   {
     PushUndoState();
     DisposeStates(redoStates);
     currentStateId = stateId;
     textAnnotations = nextTextAnnotations;
+    rectangleAnnotations = nextRectangleAnnotations;
     Changed?.Invoke(this, EventArgs.Empty);
   }
 
   private void PushUndoState()
   {
-    undoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations));
+    undoStates.Add(new ImageState(current.Retain(), currentStateId, textAnnotations, rectangleAnnotations));
     if (undoStates.Count > HistoryLimit)
     {
       undoStates[0].Bitmap.Release();
@@ -556,7 +711,8 @@ internal sealed class ImageEditDocument : IDisposable
   private sealed record ImageState(
     SharedBitmap Bitmap,
     int StateId,
-    IReadOnlyList<TextAnnotation> TextAnnotations);
+    IReadOnlyList<TextAnnotation> TextAnnotations,
+    IReadOnlyList<RectangleAnnotation> RectangleAnnotations);
 
   private sealed class SharedBitmap(Bitmap bitmap)
   {
@@ -585,5 +741,10 @@ internal sealed record TextAnnotation(
   RectangleF Bounds)
 {
   internal float FontSize { get; init; } = 12;
+  internal IReadOnlyList<Rectangle> MaskedRegions { get; init; } = [];
+}
+
+internal sealed record RectangleAnnotation(Guid Id, Rectangle Bounds, Color Color)
+{
   internal IReadOnlyList<Rectangle> MaskedRegions { get; init; } = [];
 }

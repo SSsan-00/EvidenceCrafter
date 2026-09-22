@@ -82,8 +82,37 @@ public sealed class ImageEditDocumentTests
     Assert.IsTrue(document.Undo());
     Assert.AreSame(raster, document.CurrentImage);
 
-    Assert.IsTrue(document.DrawRectangle(new Rectangle(20, 20, 100, 80)));
+    Assert.IsTrue(document.DrawArrow(new Point(20, 20), new Point(120, 100)));
     Assert.AreNotSame(raster, document.CurrentImage);
+  }
+
+  [TestMethod]
+  public void Rectangle_MoveResizeDelete_SupportsUndoRedoWithoutRasterCopies()
+  {
+    using var source = new Bitmap(400, 200);
+    using var document = new ImageEditDocument(source);
+    var raster = document.CurrentImage;
+
+    Assert.IsTrue(document.DrawRectangle(new Rectangle(20, 20, 100, 60), Color.Blue));
+    Assert.AreSame(raster, document.CurrentImage);
+    Assert.IsTrue(document.TryGetRectangleAt(new Point(20, 40), out var id));
+    Assert.IsTrue(document.MoveRectangle(id, new Point(80, 50)));
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out var moved));
+    Assert.AreEqual(new Rectangle(80, 50, 100, 60), moved.Bounds);
+
+    Assert.IsTrue(document.ResizeRectangle(id, new Rectangle(70, 40, 150, 90)));
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out var resized));
+    Assert.AreEqual(new Rectangle(70, 40, 150, 90), resized.Bounds);
+    Assert.IsTrue(document.DeleteRectangle(id));
+    Assert.IsFalse(document.TryGetRectangleAnnotation(id, out _));
+    Assert.IsTrue(document.Undo());
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out resized));
+    Assert.AreEqual(new Rectangle(70, 40, 150, 90), resized.Bounds);
+    Assert.IsTrue(document.Undo());
+    Assert.IsTrue(document.TryGetRectangleAnnotation(id, out moved));
+    Assert.AreEqual(new Rectangle(80, 50, 100, 60), moved.Bounds);
+    Assert.IsTrue(document.Redo());
+    Assert.AreSame(raster, document.CurrentImage);
   }
 
   [TestMethod]
