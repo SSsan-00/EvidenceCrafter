@@ -3,6 +3,9 @@
 2026-09-11のキャプチャ・テキスト編集・最前面機能の検証結果と手動受入手順は
 [実装レビュー](review-capture-editor-window.md) を参照。
 
+2026-10-01のNEW先行・OLD後追い配置と性能測定は
+[改修検証記録](review-same-side-backfill-2026-10-01.md) を参照。
+
 ## 通常テスト
 
 `EvidenceCrafter.Tests` はExcelなしで動くCoreテストを既定とする。
@@ -16,6 +19,8 @@ dotnet test tests\EvidenceCrafter.Tests\EvidenceCrafter.Tests.csproj --filter 'T
 Officeを起動するテストには `[TestCategory("ExcelIntegration")]` を付ける。通常CIでは実行せず、Office導入済みの明示環境だけで実行する。
 
 現行の実機テストは、同一Excelプロセスに一時Workbookを2冊作成し、Workbook別HWND、通常編集後の接続ID維持、非アクティブ側のセル選択、`Application.Goto`、`EnableEvents`復元を確認する。さらに一時PNGの手動／Case自動配置、必要行挿入、管理画像のExport・差し替え・削除・元geometry復元、保護Sheetでの拒否を確認する。行操作ではActiveCell上への挿入、live safety snapshotに基づくCase末尾削除、Undo/Redo、編集済み挿入行のUndo拒否を確認する。Close取消、監視token再発行、確定Close後の旧identity拒否、生成Excel PID終了と一時ファイル回収も同一シナリオで検証する。Windows PowerShell 5.1でも参照ハッシュ検証を再現できるよう、スクリプトはUTF-8 BOMで保存する。
+
+`SameSideBackfill` は4CASEの配置・末尾整理・同じSideの次CASE移動後の実Top、外部編集とRedo、エビデンス列外の削除保護を確認する。`SameSidePerformance` は対象CASE外の0/50/200/500図形で配置を各10回、末尾整理を各1回測定する。全体中央値と混同しない。
 
 参照Workbookを使う場合は次を必須とする。
 

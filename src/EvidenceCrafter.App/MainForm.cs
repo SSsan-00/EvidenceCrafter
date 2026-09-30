@@ -2394,7 +2394,8 @@ public sealed class MainForm : Form
           historyImages[index].Dimensions,
               images[index].AvailableWidthPoints,
           horizontalMarginPoints,
-          images[index].Plan.Image.Scale));
+          images[index].Plan.Image.Scale,
+          images[index].Plan.VerticalOffsetPoints));
         if (placed.Succeeded)
         {
           targets[index] = placed.Target!;

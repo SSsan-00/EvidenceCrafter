@@ -305,6 +305,7 @@ public sealed class AutomaticPlacementServiceTests
         WidthPoints = 100,
         HeightPoints = 50,
         SourceDimensions = new ImageDimensions(200, 100),
+        VerticalOffsetPoints = 7.25,
       }],
     };
 
@@ -321,6 +322,20 @@ public sealed class AutomaticPlacementServiceTests
     Assert.AreEqual(100, pair.Width, 0.001);
     Assert.AreEqual(100, result.Steps[0].Plan.Image.WidthPoints, 0.001);
     Assert.AreEqual(5, result.Steps[0].Plan.StartRow);
+    Assert.AreEqual(7.25, result.Steps[0].Plan.VerticalOffsetPoints);
+    Assert.AreEqual(7.25, pair.VerticalOffsetPoints);
+  }
+
+  [TestMethod]
+  public void AnalyzeSnapshot_RejectsCaseOutsideShapeScope()
+  {
+    var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json")) with
+    {
+      ShapeScope = (20, 30),
+    };
+    var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.New,
+      [new AutomaticPlacementImage("image.png", new ImageDimensions(100, 50))]);
+    Assert.IsFalse(result.Succeeded);
   }
 
   [TestMethod]

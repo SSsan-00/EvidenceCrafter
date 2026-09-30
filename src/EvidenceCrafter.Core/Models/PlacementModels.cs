@@ -46,7 +46,8 @@ public sealed record PlacementRequest(
   int TailRows = 4,
   double DefaultRowHeightPoints = 15.0,
   double? ScaleOverride = null,
-  int? PreferredStartRow = null);
+  int? PreferredStartRow = null,
+  double VerticalOffsetPoints = 2);
 
 public sealed record PlacementPlan(
   PlacementMode Mode,
@@ -55,7 +56,10 @@ public sealed record PlacementPlan(
   FittedImage Image,
   IReadOnlyList<RowInsertion> Insertions,
   CellReference FocusCell,
-  string Reason);
+  string Reason)
+{
+  public double VerticalOffsetPoints { get; init; } = 2;
+}
 
 public sealed record RowSafetyState(
   int Row,

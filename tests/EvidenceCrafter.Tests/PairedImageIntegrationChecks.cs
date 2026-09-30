@@ -68,7 +68,8 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     {
       var side = pass < 2 ? EvidenceSide.New : EvidenceSide.Old;
       var height = side == EvidenceSide.New ? 80 : 240;
-      using (var bitmap = new Bitmap(120, height))
+      var width = side == EvidenceSide.New ? 120 : 180;
+      using (var bitmap = new Bitmap(width, height))
       {
         using var graphics = Graphics.FromImage(bitmap);
         graphics.Clear(Color.CornflowerBlue);
@@ -77,7 +78,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       var beforePlacement = pass == 2
         ? new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", 3).Snapshot! : null;
       var placed = service.PlaceImages(identity, "OtherTarget", side,
-        [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, height))], requestedCaseLabel: "1-1");
+        [new AutomaticPlacementImage(imagePath, new ImageDimensions(width, height))], requestedCaseLabel: "1-1");
       Assert.IsTrue(placed.Succeeded, placed.Message);
       if (side == EvidenceSide.New)
       {
@@ -157,7 +158,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           Assert.AreEqual(original.HeightPoints, actual.HeightPoints, 0.05);
         }
         var repeated = service.PlaceImages(identity, "OtherTarget", side,
-          [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, height))], requestedCaseLabel: "1-1");
+          [new AutomaticPlacementImage(imagePath, new ImageDimensions(width, height))], requestedCaseLabel: "1-1");
         Assert.IsTrue(repeated.Succeeded, repeated.Message);
       }
       if (pass == 3)

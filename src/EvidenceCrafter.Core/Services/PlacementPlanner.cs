@@ -19,6 +19,8 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
     ArgumentNullException.ThrowIfNull(request.Layout);
     ArgumentNullException.ThrowIfNull(request.Contents);
     ArgumentNullException.ThrowIfNull(request.RowHeights);
+    if (!double.IsFinite(request.VerticalOffsetPoints) || request.VerticalOffsetPoints < 0)
+      throw new ArgumentOutOfRangeException(nameof(request), "The vertical offset must be finite and non-negative.");
 
     if (request.ImageGapRows < MinimumImageGapRows ||
       request.ImageGapRows > MaximumWorksheetRow ||
@@ -117,7 +119,7 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
 
     var requiredRows = CountRowsForHeight(
       startRow,
-      fittedImage.HeightPoints + VerticalInsetPoints,
+      fittedImage.HeightPoints + request.VerticalOffsetPoints,
       request.RowHeights,
       request.DefaultRowHeightPoints);
     var imageEndValue = (long)startRow + requiredRows - 1;
@@ -180,7 +182,7 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
       fittedImage,
       insertions,
       new CellReference(startRow, checked(sideColumns.FirstColumn + PlacementColumnInset)),
-      reason);
+      reason) { VerticalOffsetPoints = request.VerticalOffsetPoints };
   }
 
   private static bool Covers(ContentSpan content, int row) =>

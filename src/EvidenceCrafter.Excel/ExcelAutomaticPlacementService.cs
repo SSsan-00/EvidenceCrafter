@@ -58,7 +58,9 @@ public sealed class ExcelAutomaticPlacementService
       return AutomaticPlacementAnalysisResult.Failed(validation);
     }
 
-    var captured = snapshotService.Capture(workbook, worksheetName, scopeCaseLabel: requestedCaseLabel);
+    var captured = snapshotService.Capture(workbook, worksheetName, scopeCaseLabel: requestedCaseLabel,
+      scopeShapes: !string.IsNullOrWhiteSpace(requestedCaseLabel),
+      referenceShapeName: images.Count == 1 ? images[0].ReferenceShapeName : null);
     if (!captured.Succeeded || captured.Snapshot is null)
     {
       return AutomaticPlacementAnalysisResult.Failed(captured.Message);
@@ -75,7 +77,8 @@ public sealed class ExcelAutomaticPlacementService
       .LastOrDefault(anchor => anchor.Row <= snapshot.ActiveCell.Row)?.Row;
     if (string.IsNullOrWhiteSpace(requestedCaseLabel) && selectedCase.Row != activeCaseRow)
     {
-      captured = snapshotService.Capture(workbook, snapshot.WorksheetName, selectedCase.Row);
+      captured = snapshotService.Capture(workbook, snapshot.WorksheetName, selectedCase.Row, scopeShapes: true,
+        referenceShapeName: images.Count == 1 ? images[0].ReferenceShapeName : null);
       if (!captured.Succeeded || captured.Snapshot is null)
       {
         return AutomaticPlacementAnalysisResult.Failed(captured.Message);
@@ -159,6 +162,8 @@ public sealed class ExcelAutomaticPlacementService
     try
     {
       var layout = analyzed.Layout;
+      if (snapshot.ShapeScope is { } scope && (scope.FirstRow > layout.StartRow || scope.LastRow < layout.EndRow))
+        return AutomaticPlacementAnalysisResult.Failed("Snapshotの画像取得範囲外のCASEは解析できません。");
       var contents = occupancyAnalyzer.Analyze(snapshot, layout).ToList();
       var rowHeights = snapshot.RowHeights.ToDictionary(pair => pair.Key, pair => pair.Value);
       var plans = new List<AutomaticPlacementStep>(images.Count);
@@ -209,7 +214,8 @@ public sealed class ExcelAutomaticPlacementService
           contents,
           rowHeights,
           ScaleOverride: images[index].ScaleOverride ?? pair?.Scale,
-          PreferredStartRow: pair?.StartRow));
+          PreferredStartRow: pair?.StartRow,
+          VerticalOffsetPoints: pair?.VerticalOffsetPoints ?? PlacementPlanner.VerticalInsetPoints));
         if (pair is not null && plan.StartRow != pair.StartRow)
         {
           pair = pair with
@@ -276,41 +282,27 @@ public sealed class ExcelAutomaticPlacementService
       return AutomaticPlacementResult.Failed(validation);
     }
 
-    var initialAnalysis = preparedAnalysis ?? Analyze(
+    // The preview can outlive arbitrary Excel edits. Read once at commit and plan
+    // from that fresh snapshot; comparing then discarding it only doubles COM work.
+    if (preparedAnalysis is { Succeeded: true } &&
+      string.Equals(worksheetName, "ActiveSheet", StringComparison.OrdinalIgnoreCase))
+      worksheetName = preparedAnalysis.WorksheetName;
+    var initialAnalysis = Analyze(
       workbook,
       worksheetName,
       side,
       images,
       preferActiveGap,
       horizontalMarginPoints,
-      requestedCaseLabel);
+      requestedCaseLabel ?? preparedAnalysis?.CaseLabel);
     if (!initialAnalysis.Succeeded)
     {
       return AutomaticPlacementResult.Failed(initialAnalysis.Message, initialAnalysis);
     }
 
-    if (!AnalysisMatchesRequest(initialAnalysis, worksheetName, images) || !SnapshotStillMatches(workbook, initialAnalysis))
-    {
-      // The user may edit Excel while the preview is open. Refresh the plan against
-      // the current worksheet instead of rejecting an otherwise valid placement.
-      var refreshed = Analyze(
-        workbook,
-        worksheetName,
-        side,
-        images,
-        preferActiveGap,
-        horizontalMarginPoints,
-        requestedCaseLabel ?? initialAnalysis.CaseLabel);
-      if (!refreshed.Succeeded)
-      {
-        return AutomaticPlacementResult.Failed(refreshed.Message, refreshed);
-      }
-
-      initialAnalysis = refreshed;
-    }
-
     images = initialAnalysis.Steps.Select(step => step.Image).ToArray();
     var appliedRows = new List<AppliedRowInsertion>();
+    PairedImageResize? referenceGuard = null;
     if (!referencePrepared && images.Count == 1 && initialAnalysis.Steps[0].Pair is { } initialPair &&
       (!images[0].PreserveReferenceSize || initialPair.TargetStartRow != initialPair.StartRow))
     {
@@ -349,6 +341,12 @@ public sealed class ExcelAutomaticPlacementService
           : count > 0
             ? new AppliedRowInsertion(before.WorksheetName, pair.EndRow + 1, count, "参照画像の共通倍率用の領域")
             : null;
+        if (referenceInsertion is null && ExcelManagedShapeService.TargetUnchanged(before, desired))
+        {
+          // Keep the expected reference for Undo/Redo without mutating it.
+          referenceGuard = new PairedImageResize(before, before, null);
+          break;
+        }
         var reference = new PairedImageResize(before, desired, referenceInsertion);
         var prepared = reference.SetApplied(workbook, true);
         if (!prepared.Succeeded && attempt == 0 && reference.CanRetryPreparation)
@@ -453,7 +451,8 @@ public sealed class ExcelAutomaticPlacementService
         verifiedStep.Image.Dimensions,
         verifiedStep.AvailableWidthPoints,
         horizontalMarginPoints,
-        verifiedStep.Plan.Image.Scale);
+        verifiedStep.Plan.Image.Scale,
+        verifiedStep.Plan.VerticalOffsetPoints);
       if (!placement.Succeeded)
       {
         return Compensate(workbook, initialAnalysis, placed, appliedRows, placement.Message);
@@ -469,6 +468,15 @@ public sealed class ExcelAutomaticPlacementService
         verifiedStep.Plan,
         verifiedStep.AvailableWidthPoints));
       executedSteps.Add(verifiedStep);
+      if (verifiedStep.Pair is { } verifiedPair)
+      {
+        var reference = new ExcelManagedShapeService().Inspect(workbook, placement.WorksheetName, verifiedPair.ShapeName);
+        if (reference.Shape is not { } actual || Math.Abs(actual.TopPoints - placement.Target!.TopPoints) > 0.05 ||
+          Math.Abs(actual.WidthPoints - verifiedPair.Width) > 0.05 || Math.Abs(actual.HeightPoints - verifiedPair.Height) > 0.05)
+          return Compensate(workbook, initialAnalysis, placed, appliedRows,
+            "対応画像の実際の位置・サイズが計画と一致しないため配置を取り消しました。");
+        referenceGuard ??= new PairedImageResize(actual, actual, null);
+      }
     }
 
     var executedAnalysis = initialAnalysis with { Steps = executedSteps };
@@ -480,35 +488,8 @@ public sealed class ExcelAutomaticPlacementService
       placed,
       appliedRows,
       [],
-      $"{placed.Count}件の画像を配置しました（未保存）。");
+      $"{placed.Count}件の画像を配置しました（未保存）。") { ReferenceResize = referenceGuard };
   }
-
-  private bool SnapshotStillMatches(
-    WorkbookIdentity workbook,
-    AutomaticPlacementAnalysisResult expected)
-  {
-    var current = snapshotService.Capture(workbook, expected.WorksheetName, expected.AnalysisRow);
-    if (!current.Succeeded || current.Snapshot is null)
-    {
-      return false;
-    }
-
-    var normalized = current.Snapshot with
-    {
-      ActiveCell = new CellReference(expected.AnalysisRow, current.Snapshot.ActiveCell.Column),
-      LayoutSignals = current.Snapshot.LayoutSignals with { ActiveRow = expected.AnalysisRow },
-    };
-    return string.Equals(Fingerprint(normalized), expected.SnapshotFingerprint, StringComparison.Ordinal);
-  }
-
-  private static bool AnalysisMatchesRequest(
-    AutomaticPlacementAnalysisResult analysis,
-    string worksheetName,
-    IReadOnlyList<AutomaticPlacementImage> images) =>
-    (string.Equals(worksheetName, "ActiveSheet", StringComparison.OrdinalIgnoreCase) ||
-      string.Equals(worksheetName, analysis.WorksheetName, StringComparison.OrdinalIgnoreCase)) &&
-    analysis.Steps.Count == images.Count &&
-    analysis.Steps.Select(step => step.Image).SequenceEqual(images);
 
   private static string ResolveCaseLabel(SheetSnapshot snapshot, int startRow)
   {
@@ -745,6 +726,7 @@ public sealed class ExcelAutomaticPlacementService
       return new(reference.Name, preservedScale, reference.WidthPoints, reference.HeightPoints,
         reference.StartRow, reference.EndRow, reference.SourceDimensions is null)
       {
+        VerticalOffsetPoints = reference.VerticalOffsetPoints,
         ReferenceScale = reference.SourceDimensions is { } sourceDimensions
           ? reference.WidthPoints / sourceDimensions.WidthPoints : null,
       };
@@ -757,6 +739,7 @@ public sealed class ExcelAutomaticPlacementService
       reference.HeightPoints * commonWidth / reference.WidthPoints,
       reference.StartRow, reference.EndRow, reference.SourceDimensions is null)
     {
+      VerticalOffsetPoints = reference.VerticalOffsetPoints,
       ReferenceScale = reference.SourceDimensions is { } sizingSource
         ? commonWidth / sizingSource.WidthPoints : null,
     };
@@ -793,6 +776,7 @@ public sealed class ExcelAutomaticPlacementService
       .Append(snapshot.RawUsedFirstRow).Append(',').Append(snapshot.RawUsedLastRow).Append(',')
       .Append(snapshot.RawUsedFirstColumn).Append(',').Append(snapshot.RawUsedLastColumn).Append('|')
       .Append(snapshot.IsReadOnly).Append(',').Append(snapshot.IsProtected).Append('|');
+    text.Append(snapshot.ShapeScope).Append('|');
     var signals = snapshot.LayoutSignals;
     text.Append('L').Append(signals.ActiveRow).Append(',').Append(signals.RawUsedLastRow).Append(',')
       .Append(signals.LogicalEvidenceLastRow).Append(',').Append(signals.NewFirstColumn).Append(',')
@@ -842,7 +826,7 @@ public sealed class ExcelAutomaticPlacementService
       text.Append('S').Append(shape.Name).Append(',').Append(shape.StartRow).Append(',')
         .Append(shape.EndRow).Append(',').Append(shape.StartColumn).Append(',')
         .Append(shape.EndColumn).Append(',').Append(shape.IsManagedImage).Append('|')
-        .Append(FormattableString.Invariant($"{shape.TopPoints:R},{shape.WidthPoints:R},{shape.HeightPoints:R},{shape.HorizontalOffsetPoints:R},{shape.SourceDimensions?.WidthPoints:R},{shape.SourceDimensions?.HeightPoints:R}|"));
+        .Append(FormattableString.Invariant($"{shape.TopPoints:R},{shape.WidthPoints:R},{shape.HeightPoints:R},{shape.HorizontalOffsetPoints:R},{shape.VerticalOffsetPoints:R},{shape.SourceDimensions?.WidthPoints:R},{shape.SourceDimensions?.HeightPoints:R}|"));
     }
 
     foreach (var height in snapshot.RowHeights.OrderBy(pair => pair.Key))

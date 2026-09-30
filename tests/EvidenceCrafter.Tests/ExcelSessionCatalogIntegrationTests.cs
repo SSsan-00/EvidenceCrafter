@@ -46,7 +46,15 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void PairedImages_MoveCellContentAndUndoInsertedRows() =>
     RunSupervisedScenario(Scenario.PairCollision);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision }
+  [TestMethod]
+  public void SameSideBackfill_AlignsActualTopsAcrossCases() =>
+    RunSupervisedScenario(Scenario.SameSideBackfill);
+
+  [TestMethod]
+  public void SameSidePerformance_WithGrowingShapeCounts_ReportsCommitTimings() =>
+    RunSupervisedScenario(Scenario.SameSidePerformance);
+
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance }
 
   private static void RunSupervisedScenario(Scenario scenario)
   {
@@ -80,7 +88,8 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     {
       thread.SetApartmentState(ApartmentState.STA);
       thread.Start();
-      if (!completed.Task.Wait(TimeSpan.FromSeconds(scenario == Scenario.ReferenceAppend ? 180 : 55)))
+      if (!completed.Task.Wait(TimeSpan.FromSeconds(scenario == Scenario.SameSidePerformance ? 900 :
+        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill ? 180 : 55)))
       {
         supervisor.SuppressComCleanup();
         var terminated = supervisor.TryTerminate(out var terminationFailure);
@@ -185,6 +194,18 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       if (scenario is Scenario.ReferenceAppend or Scenario.ReferenceNavigation)
       {
         VerifyReferenceAppend(workbooks, temporaryDirectory, placementImagePath, scenario == Scenario.ReferenceNavigation);
+      }
+      else if (scenario == Scenario.SameSidePerformance)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifySameSidePerformance(otherWorksheet, identity, placementImagePath);
+      }
+      else if (scenario == Scenario.SameSideBackfill)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifySameSideBackfill(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.PairCollision)
       {
@@ -1034,6 +1055,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         application = null;
         if (ownsExcelProcess && excelProcess is not null)
         {
+          // Collect temporary automation wrappers before checking the owned process.
+          GC.Collect();
+          GC.WaitForPendingFinalizers();
+          GC.Collect();
+          GC.WaitForPendingFinalizers();
           TryCleanup(() => EnsureExcelProcessExited(excelProcess), cleanupFailures);
         }
       }

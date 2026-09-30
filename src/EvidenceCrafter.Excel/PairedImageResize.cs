@@ -14,6 +14,7 @@ public sealed record PairedImagePlan(
   public double? ReferenceScale { get; init; }
   public int TargetStartRow { get; init; } = StartRow;
   public double? TargetTopPoints { get; init; }
+  public double VerticalOffsetPoints { get; init; } = 2;
 }
 
 /// <summary>The reference resize and its reserved rows form one reversible part of automatic placement.</summary>
@@ -44,6 +45,8 @@ public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTar
       CanRetryPreparation = apply;
       return Failed("参照画像が変更されたためUndo/Redoを停止しました。");
     }
+    if (Insertion is null && ExcelManagedShapeService.TargetUnchanged(Before, After))
+      return RowMutationResult.NoChange(RowMutationOperation.Insert, Before.WorksheetName, "参照画像が変更されていないことを確認しました。");
     if (apply && Insertion is { } added)
     {
       var insert = rows.InsertRows(workbook, added.WorksheetName, new(added.StartRow, added.Count, added.Reason));

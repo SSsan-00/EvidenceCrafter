@@ -220,6 +220,9 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           ManagedShapeMetadata.IsManagedName(name) && parsed is not null)
         {
           TopPoints = Convert.ToDouble(GetRequiredProperty(shape, "Top"), CultureInfo.InvariantCulture),
+          VerticalOffsetPoints = ManagedShapeMetadata.IsManagedName(name) && parsed is not null
+            ? Convert.ToDouble(GetRequiredProperty(shape, "Top"), CultureInfo.InvariantCulture) -
+              Convert.ToDouble(GetRequiredProperty(topLeft, "Top"), CultureInfo.InvariantCulture) : 2,
           WidthPoints = Convert.ToDouble(GetRequiredProperty(shape, "Width"), CultureInfo.InvariantCulture),
           HeightPoints = Convert.ToDouble(GetRequiredProperty(shape, "Height"), CultureInfo.InvariantCulture),
           HorizontalOffsetPoints = ManagedShapeMetadata.IsManagedName(name) && parsed is not null

@@ -35,7 +35,7 @@ public sealed class ExcelCaseMaintenanceService
     int tailRows,
     bool requireBothSides)
   {
-    var captured = snapshotService.Capture(workbook, worksheetName, caseRow);
+    var captured = snapshotService.Capture(workbook, worksheetName, caseRow, scopeShapes: true);
     if (!captured.Succeeded || captured.Snapshot is null)
     {
       return RowMutationResult.Failed(RowMutationOperation.Delete, worksheetName, captured.Message);

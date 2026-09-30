@@ -690,6 +690,7 @@ public sealed class ExcelRowMutationService
     var hyperlinkRows = ReadRowsWithHyperlinks(worksheet, firstRow, lastRow);
     var shapeRows = ReadRowsWithShapes(worksheet, firstRow, lastRow);
     var rangeHasNoMerges = RangeHasNoMerges(worksheet, firstRow, lastRow);
+    var contentRows = ReadRowsWithCellContent(worksheet, firstRow, lastRow);
     object? rows = null;
     try
     {
@@ -705,7 +706,7 @@ public sealed class ExcelRowMutationService
             throw new InvalidOperationException("The requested Excel row could not be resolved.");
           var state = new RowSafetyState(
             row,
-            HasAnyCellContent(rowRange),
+            contentRows?.Contains(row) ?? HasAnyCellContent(rowRange),
             commentRows.Contains(row),
             hyperlinkRows.Contains(row),
             shapeRows.Contains(row),
@@ -863,9 +864,55 @@ public sealed class ExcelRowMutationService
   private static bool HasAnyCellContent(object rowRange) =>
     HasAnyValue(rowRange, "Value2") || HasAnyValue(rowRange, "Formula");
 
+  private static HashSet<int>? ReadRowsWithCellContent(object worksheet, int firstRow, int lastRow)
+  {
+    object? used = null, usedRows = null, usedColumns = null, first = null, last = null, block = null;
+    try
+    {
+      used = GetRequiredProperty(worksheet, "UsedRange");
+      usedRows = GetRequiredProperty(used, "Rows");
+      usedColumns = GetRequiredProperty(used, "Columns");
+      var usedFirstRow = Convert.ToInt32(GetRequiredProperty(used, "Row"), CultureInfo.InvariantCulture);
+      var firstColumn = Convert.ToInt32(GetRequiredProperty(used, "Column"), CultureInfo.InvariantCulture);
+      var columns = Convert.ToInt32(GetRequiredProperty(usedColumns, "Count"), CultureInfo.InvariantCulture);
+      var start = Math.Max(firstRow, usedFirstRow);
+      var end = Math.Min(lastRow, checked(usedFirstRow + Convert.ToInt32(GetRequiredProperty(usedRows, "Count"), CultureInfo.InvariantCulture) - 1));
+      if (end < start) return [];
+      // ponytail: cap the bulk matrix; unusually wide ranges retain the per-row safety check.
+      if ((long)(end - start + 1) * columns > 250_000) return null;
+      first = GetRequiredProperty(worksheet, "Cells", start, firstColumn);
+      last = GetRequiredProperty(worksheet, "Cells", end, checked(firstColumn + columns - 1));
+      block = GetRequiredProperty(worksheet, "Range", first, last);
+      if (!TryGetProperty(block, "Value2", out var values) || !TryGetProperty(block, "Formula", out var formulas))
+        return AllRows(firstRow, lastRow);
+      var result = new HashSet<int>();
+      var rows = end - start + 1;
+      for (var row = 0; row < rows; row++)
+        for (var column = 0; column < columns; column++)
+          if (IsNonEmptyValue(MatrixValue(values, row, column, rows, columns)) ||
+            IsNonEmptyValue(MatrixValue(formulas, row, column, rows, columns)))
+          {
+            result.Add(start + row);
+            break;
+          }
+      return result;
+    }
+    catch (Exception exception) when (IsAutomationFailure(exception))
+    {
+      return AllRows(firstRow, lastRow);
+    }
+    finally
+    {
+      ComRelease.Release(block); ComRelease.Release(last); ComRelease.Release(first);
+      ComRelease.Release(usedColumns); ComRelease.Release(usedRows); ComRelease.Release(used);
+    }
+  }
+
   private static bool HasAnyValue(object target, string propertyName)
   {
-    if (!TryGetProperty(target, propertyName, out var value) || value is null)
+    // Unknown content must prevent deletion, including the wide-range fallback.
+    if (!TryGetProperty(target, propertyName, out var value)) return true;
+    if (value is null)
     {
       return false;
     }

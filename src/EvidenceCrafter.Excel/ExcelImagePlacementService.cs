@@ -33,11 +33,14 @@ public sealed class ExcelImagePlacementService
     ImageDimensions imageDimensions,
     double? availableWidthPoints = null,
     double horizontalMarginPoints = 6,
-    double? scaleOverride = null)
+    double? scaleOverride = null,
+    double verticalOffsetPoints = PlacementPlanner.VerticalInsetPoints)
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
     ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
+    if (!double.IsFinite(verticalOffsetPoints) || verticalOffsetPoints < 0)
+      throw new ArgumentOutOfRangeException(nameof(verticalOffsetPoints));
     if (requestedCell is not null && !IsValidCell(requestedCell.Value))
     {
       throw new ArgumentOutOfRangeException(nameof(requestedCell));
@@ -114,7 +117,7 @@ public sealed class ExcelImagePlacementService
             imageDimensions,
             availableWidthPoints,
             horizontalMarginPoints,
-            scaleOverride);
+            scaleOverride, verticalOffsetPoints);
           return result ?? ImagePlacementResult.Failed("The selected Workbook could not be matched in its Excel instance.");
         }
         catch (Exception exception) when (IsAutomationFailure(exception))
@@ -347,7 +350,8 @@ public sealed class ExcelImagePlacementService
     ImageDimensions imageDimensions,
     double? availableWidthPoints,
     double horizontalMarginPoints,
-    double? scaleOverride)
+    double? scaleOverride,
+    double verticalOffsetPoints)
   {
     if (TryGetProperty(runningObject, "Workbooks", out var workbooks))
     {
@@ -378,7 +382,7 @@ public sealed class ExcelImagePlacementService
                 imageDimensions,
                 availableWidthPoints,
                 horizontalMarginPoints,
-                scaleOverride);
+                scaleOverride, verticalOffsetPoints);
             }
           }
           finally
@@ -420,7 +424,7 @@ public sealed class ExcelImagePlacementService
           imageDimensions,
           availableWidthPoints,
           horizontalMarginPoints,
-          scaleOverride)
+          scaleOverride, verticalOffsetPoints)
         : null;
     }
     finally
@@ -440,7 +444,8 @@ public sealed class ExcelImagePlacementService
     ImageDimensions imageDimensions,
     double? availableWidthPoints,
     double horizontalMarginPoints,
-    double? scaleOverride)
+    double? scaleOverride,
+    double verticalOffsetPoints)
   {
     if (!WorkbookWindowMatchesIdentity(workbook, identity))
     {
@@ -508,7 +513,7 @@ public sealed class ExcelImagePlacementService
         MsoFalse,
         MsoTrue,
         cellLeft + horizontalMarginPoints,
-        cellTop + PlacementPlanner.VerticalInsetPoints,
+        cellTop + verticalOffsetPoints,
         fittedImage.WidthPoints,
         fittedImage.HeightPoints);
       if (shape is null)
@@ -528,7 +533,10 @@ public sealed class ExcelImagePlacementService
       SetProperty(shape, "Placement", XlMove);
 
       var insertedName = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.InvariantCulture);
-      if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal))
+      if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal) ||
+        Math.Abs(ReadDoubleProperty(shape, "Top") - (cellTop + verticalOffsetPoints)) > 0.05 ||
+        Math.Abs(ReadDoubleProperty(shape, "Width") - fittedImage.WidthPoints) > 0.05 ||
+        Math.Abs(ReadDoubleProperty(shape, "Height") - fittedImage.HeightPoints) > 0.05)
       {
         TryDeleteShape(shape);
         return ImagePlacementResult.Failed("The inserted image Shape could not be verified.");

@@ -10,6 +10,8 @@ namespace EvidenceCrafter.Excel;
 /// <summary>Captures the current worksheet state into immutable, COM-free records.</summary>
 public sealed class ExcelSheetSnapshotService
 {
+  [ThreadStatic]
+  internal static Action<int, int>? ShapeReadObserved;
   private const int MaximumSnapshotCells = 250_000;
   private const int NewFirstColumn = 3;
   private const int XlEdgeTop = 8;
@@ -22,15 +24,17 @@ public sealed class ExcelSheetSnapshotService
     string worksheetName,
     int? scopeRow = null,
     bool includeWorksheetNames = false,
-    string? scopeCaseLabel = null) =>
-    CaptureCore(workbook, worksheetName, scopeRow, includeWorksheetNames, navigationOnly: false, includeShapes: true, scopeCaseLabel);
+    string? scopeCaseLabel = null,
+    bool scopeShapes = false,
+    string? referenceShapeName = null) =>
+    CaptureCore(workbook, worksheetName, scopeRow, includeWorksheetNames, navigationOnly: false, includeShapes: true, scopeCaseLabel, scopeShapes, referenceShapeName);
 
   public SheetSnapshotResult CaptureForNavigation(
     WorkbookIdentity workbook,
     string worksheetName,
     bool includeWorksheetNames = false,
     bool includeShapes = true) =>
-    CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true, includeShapes, scopeCaseLabel: null);
+    CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true, includeShapes, scopeCaseLabel: null, scopeShapes: false, referenceShapeName: null);
 
   private static SheetSnapshotResult CaptureCore(
     WorkbookIdentity workbook,
@@ -39,7 +43,9 @@ public sealed class ExcelSheetSnapshotService
     bool includeWorksheetNames,
     bool navigationOnly,
     bool includeShapes,
-    string? scopeCaseLabel)
+    string? scopeCaseLabel,
+    bool scopeShapes,
+    string? referenceShapeName)
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
@@ -112,7 +118,7 @@ public sealed class ExcelSheetSnapshotService
                   includeWorksheetNames,
                   navigationOnly,
                   includeShapes,
-                  scopeCaseLabel) ??
+                  scopeCaseLabel, scopeShapes, referenceShapeName) ??
                 SheetSnapshotResult.Failed(worksheetName, "The selected Workbook could not be matched.");
           }
           catch (Exception exception) when (IsAutomationFailure(exception))
@@ -156,7 +162,9 @@ public sealed class ExcelSheetSnapshotService
     bool includeWorksheetNames,
     bool navigationOnly,
     bool includeShapes,
-    string? scopeCaseLabel)
+    string? scopeCaseLabel,
+    bool scopeShapes,
+    string? referenceShapeName)
   {
     if (TryGetProperty(runningObject, "Workbooks", out var workbooks))
     {
@@ -185,7 +193,7 @@ public sealed class ExcelSheetSnapshotService
                 includeWorksheetNames,
                 navigationOnly,
                 includeShapes,
-                scopeCaseLabel);
+                scopeCaseLabel, scopeShapes, referenceShapeName);
             }
           }
           finally
@@ -219,7 +227,7 @@ public sealed class ExcelSheetSnapshotService
             includeWorksheetNames,
             navigationOnly,
             includeShapes,
-            scopeCaseLabel)
+            scopeCaseLabel, scopeShapes, referenceShapeName)
         : null;
     }
     finally
@@ -237,7 +245,9 @@ public sealed class ExcelSheetSnapshotService
     bool includeWorksheetNames,
     bool navigationOnly,
     bool includeShapes,
-    string? scopeCaseLabel)
+    string? scopeCaseLabel,
+    bool scopeShapes,
+    string? referenceShapeName)
   {
     if (!WorkbookWindowMatchesIdentity(workbook, identity))
     {
@@ -377,8 +387,10 @@ public sealed class ExcelSheetSnapshotService
           observedLastColumn);
       captureStage = "reading worksheet Shapes";
       // Adjacent CASE navigation depends on structure, not image occupancy.
-      // Placement callers always retain the complete, fresh shape snapshot.
-      var shapes = includeShapes ? ReadShapes(worksheet) : [];
+      // Placement still reads every live boundary; only unrelated details are skipped.
+      var shapes = !includeShapes ? [] : scopeShapes
+        ? ReadShapesCore(worksheet, currentCaseFirstRow, currentCaseLastRow, referenceShapeName)
+        : ReadShapes(worksheet);
       captureStage = "reading row heights and column widths";
       var rowHeights = navigationOnly
         ? new Dictionary<int, double>()
@@ -420,6 +432,7 @@ public sealed class ExcelSheetSnapshotService
         columnWidths)
       {
         WorksheetNames = includeWorksheetNames ? ReadWorksheetNames(workbook) : [],
+        ShapeScope = scopeShapes ? (currentCaseFirstRow, currentCaseLastRow) : null,
       };
       return new SheetSnapshotResult(true, snapshot, $"{resolvedName} のライブSnapshotを取得しました。");
     }
@@ -603,8 +616,12 @@ public sealed class ExcelSheetSnapshotService
     return result;
   }
 
-  private static IReadOnlyList<SnapshotShape> ReadShapes(object worksheet)
+  private static IReadOnlyList<SnapshotShape> ReadShapes(object worksheet) =>
+    ReadShapesCore(worksheet, 1, ExcelWorksheetLimits.MaximumRow, null);
+
+  private static IReadOnlyList<SnapshotShape> ReadShapesCore(object worksheet, int firstRow, int lastRow, string? referenceShapeName)
   {
+    // ponytail: O(N) live bounds scan; use an Excel-side batch reader only if this remains the measured bottleneck.
     object? shapes = null;
     var result = new List<SnapshotShape>();
     try
@@ -626,13 +643,17 @@ public sealed class ExcelSheetSnapshotService
 
           topLeft = GetRequiredProperty(shape, "TopLeftCell");
           bottomRight = GetRequiredProperty(shape, "BottomRightCell");
+          var start = ReadShapeCellReference(topLeft);
+          var end = ReadShapeCellReference(bottomRight);
+          var intersects = end.Row >= firstRow && start.Row <= lastRow;
+          if (!intersects && referenceShapeName is null) continue;
           var name = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.CurrentCulture) ?? string.Empty;
+          if (!intersects && !string.Equals(name, referenceShapeName, StringComparison.Ordinal)) continue;
           ManagedShapeMetadata? metadata = null;
           var isManaged = ManagedShapeMetadata.IsManagedName(name) &&
             TryGetProperty(shape, "AlternativeText", out var text) &&
             ManagedShapeMetadata.TryParse(Convert.ToString(text, CultureInfo.InvariantCulture), out metadata);
-          var start = ReadShapeCellReference(topLeft);
-          var end = ReadShapeCellReference(bottomRight);
+          var top = Convert.ToDouble(GetRequiredProperty(shape, "Top"), CultureInfo.InvariantCulture);
           result.Add(new SnapshotShape(
             name,
             start.Row,
@@ -641,7 +662,10 @@ public sealed class ExcelSheetSnapshotService
             end.Column,
             isManaged)
           {
-            TopPoints = Convert.ToDouble(GetRequiredProperty(shape, "Top"), CultureInfo.InvariantCulture),
+            TopPoints = top,
+            VerticalOffsetPoints = isManaged
+              ? top -
+                Convert.ToDouble(GetRequiredProperty(topLeft, "Top"), CultureInfo.InvariantCulture) : 2,
             WidthPoints = Convert.ToDouble(GetRequiredProperty(shape, "Width"), CultureInfo.InvariantCulture),
             HeightPoints = Convert.ToDouble(GetRequiredProperty(shape, "Height"), CultureInfo.InvariantCulture),
             HorizontalOffsetPoints = isManaged
@@ -658,6 +682,7 @@ public sealed class ExcelSheetSnapshotService
         }
       }
 
+      ShapeReadObserved?.Invoke(count, result.Count);
       return result;
     }
     finally

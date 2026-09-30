@@ -26,6 +26,7 @@ public sealed record SnapshotShape(
   public double WidthPoints { get; init; }
   public double HeightPoints { get; init; }
   public double HorizontalOffsetPoints { get; init; }
+  public double VerticalOffsetPoints { get; init; } = 2;
   public ImageDimensions? SourceDimensions { get; init; }
 }
 
@@ -48,4 +49,7 @@ public sealed record SheetSnapshot(
   IReadOnlyDictionary<int, double> ColumnWidths)
 {
   public IReadOnlyList<string> WorksheetNames { get; init; } = [];
+  // Null means a complete worksheet shape snapshot. Scoped snapshots retain
+  // every crossing shape and an explicitly named reference, even outside the CASE.
+  public (int FirstRow, int LastRow)? ShapeScope { get; init; }
 }

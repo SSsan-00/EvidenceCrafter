@@ -129,8 +129,13 @@ public sealed class SingleInstanceTests
     thread.Join();
     try
     {
-      using var next = new SingleInstance(name);
-      Assert.IsTrue(next.IsPrimary);
+      // Managed Join can return before Windows completes native-thread teardown
+      // and marks the mutex abandoned. Verify recovery after that transition.
+      Assert.IsTrue(SpinWait.SpinUntil(() =>
+      {
+        using var next = new SingleInstance(name);
+        return next.IsPrimary;
+      }, TimeSpan.FromSeconds(2)));
     }
     finally { abandoned?.Dispose(); }
   }

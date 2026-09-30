@@ -8,6 +8,16 @@ public sealed class PlacementPlannerTests
 {
   private readonly PlacementPlanner planner = new(new ImageSizingService());
   [TestMethod]
+  public void Plan_UsesActualVerticalOffsetForSpaceAndRejectsInvalidOffsets()
+  {
+    var request = CreateRequest([], image: new ImageDimensions(100, 25)) with { VerticalOffsetPoints = 8 };
+    var plan = planner.Plan(request);
+    Assert.AreEqual(7, plan.EndRow);
+    Assert.AreEqual(8, plan.VerticalOffsetPoints);
+    foreach (var offset in new[] { -1.0, double.NaN, double.PositiveInfinity })
+      Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => planner.Plan(request with { VerticalOffsetPoints = offset }));
+  }
+  [TestMethod]
   public void Plan_HiddenRowsDoNotCountAsAvailableImageHeight()
   {
     var request = CreateRequest([]) with
