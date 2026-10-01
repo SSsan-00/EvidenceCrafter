@@ -50,12 +50,14 @@ public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTar
     if (apply && Insertion is { } added)
     {
       var insert = rows.InsertRows(workbook, added.WorksheetName, new(added.StartRow, added.Count, added.Reason));
-      if (!insert.Succeeded || !insert.Changed) return Failed(insert.Message);
+      if (!insert.Succeeded || !insert.Changed) { CompensationSucceeded = !insert.MutationMayHaveOccurred; return insert; }
       var normalize = rows.NormalizeInsertedRows(workbook, added.WorksheetName, added.StartRow, added.Count, 15);
       if (!normalize.Succeeded)
       {
+        if (normalize.MutationMayHaveOccurred) { CompensationSucceeded = false; return normalize; }
         var rollback = rows.DeleteRowsIfSafe(workbook, added.WorksheetName, added.StartRow, added.Count);
         CompensationSucceeded = rollback.Succeeded && rollback.Changed;
+        if (rollback.MutationMayHaveOccurred) return rollback;
         return Failed(normalize.Message + (CompensationSucceeded ? "" : " 行の復元にも失敗しました。"));
       }
     }
@@ -67,6 +69,7 @@ public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTar
       {
         var rollback = rows.DeleteRowsIfSafe(workbook, addedRows.WorksheetName, addedRows.StartRow, addedRows.Count);
         CompensationSucceeded &= rollback.Succeeded && rollback.Changed;
+        if (rollback.MutationMayHaveOccurred) return rollback;
         if (!rollback.Succeeded || !rollback.Changed) return Failed(resize.Message + " 追加行を復元できませんでした。");
       }
       CanRetryPreparation = apply && resize.ReferenceChanged && CompensationSucceeded;
@@ -78,6 +81,7 @@ public sealed class PairedImageResize(ManagedShapeTarget before, ManagedShapeTar
       var deletion = rows.DeleteRowsIfSafe(workbook, removed.WorksheetName, removed.StartRow, removed.Count);
       if (!deletion.Succeeded || !deletion.Changed)
       {
+        if (deletion.MutationMayHaveOccurred) { CompensationSucceeded = false; return deletion; }
         var restored = shapes.Resize(workbook, resize.After!, After);
         CompensationSucceeded = restored.Succeeded;
         return Failed(deletion.Message + (restored.Succeeded ? "" : " 参照画像の復元にも失敗しました。"));

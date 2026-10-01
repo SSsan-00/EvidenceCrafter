@@ -52,11 +52,15 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
 
   [TestMethod]
   public void SameSidePerformance_WithGrowingShapeCounts_ReportsCommitTimings() =>
-    RunSupervisedScenario(Scenario.SameSidePerformance);
+    RunSameSidePerformanceSamples();
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance }
+  [TestMethod]
+  public void RowMutationOptimizations_PreserveSafetyAndFingerprints() =>
+    RunSupervisedScenario(Scenario.RowMutationOptimization);
 
-  private static void RunSupervisedScenario(Scenario scenario)
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization }
+
+  private static void RunSupervisedScenario(Scenario scenario, Action<object, WorkbookIdentity, string>? performanceSample = null)
   {
     Exception? failure = null;
     string? inconclusiveReason = null;
@@ -66,7 +70,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     {
       try
       {
-        RunRealWorkbookScenario(supervisor, scenario);
+        RunRealWorkbookScenario(supervisor, scenario, performanceSample);
       }
       catch (OfficeUnavailableException exception)
       {
@@ -89,7 +93,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       thread.SetApartmentState(ApartmentState.STA);
       thread.Start();
       if (!completed.Task.Wait(TimeSpan.FromSeconds(scenario == Scenario.SameSidePerformance ? 900 :
-        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill ? 180 : 55)))
+        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.RowMutationOptimization ? 180 : 55)))
       {
         supervisor.SuppressComCleanup();
         var terminated = supervisor.TryTerminate(out var terminationFailure);
@@ -105,6 +109,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       thread.Join();
       if (inconclusiveReason is not null)
       {
+        if (scenario == Scenario.SameSidePerformance) Assert.Fail(inconclusiveReason);
         Assert.Inconclusive(inconclusiveReason);
       }
 
@@ -119,7 +124,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     }
   }
 
-  private static void RunRealWorkbookScenario(ScenarioSupervisor supervisor, Scenario scenario)
+  private static void RunRealWorkbookScenario(ScenarioSupervisor supervisor, Scenario scenario, Action<object, WorkbookIdentity, string>? performanceSample = null)
   {
     T RunExcelSta<T>(Func<T> action) => RunOnSta(
       action,
@@ -199,7 +204,13 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       {
         var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
           string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
-        VerifySameSidePerformance(otherWorksheet, identity, placementImagePath);
+        performanceSample!(otherWorksheet, identity, placementImagePath);
+      }
+      else if (scenario == Scenario.RowMutationOptimization)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifyRowMutationOptimizations(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.SameSideBackfill)
       {
@@ -1033,12 +1044,20 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         TryCleanup(() => Release(workbookForCancelledClose), cleanupFailures);
         if (ownsExcelProcess && otherWorkbook is not null)
         {
-          TryCleanup(() => TryInvoke(otherWorkbook, "Close", false), cleanupFailures);
+          TryCleanup(() =>
+          {
+            if (scenario == Scenario.SameSidePerformance) _ = InvokeMethod(otherWorkbook, "Close", false);
+            else TryInvoke(otherWorkbook, "Close", false);
+          }, cleanupFailures);
         }
 
         if (ownsExcelProcess && workbook is not null)
         {
-          TryCleanup(() => TryInvoke(workbook, "Close", false), cleanupFailures);
+          TryCleanup(() =>
+          {
+            if (scenario == Scenario.SameSidePerformance) _ = InvokeMethod(workbook, "Close", false);
+            else TryInvoke(workbook, "Close", false);
+          }, cleanupFailures);
         }
 
         TryCleanup(() => Release(otherWorksheet), cleanupFailures);
@@ -1048,7 +1067,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         TryCleanup(() => Release(workbooks), cleanupFailures);
         if (ownsExcelProcess && application is not null)
         {
-          TryCleanup(() => TryInvoke(application, "Quit"), cleanupFailures);
+          TryCleanup(() =>
+          {
+            if (scenario == Scenario.SameSidePerformance) _ = InvokeMethod(application, "Quit");
+            else TryInvoke(application, "Quit");
+          }, cleanupFailures);
         }
 
         TryCleanup(() => Release(application), cleanupFailures);

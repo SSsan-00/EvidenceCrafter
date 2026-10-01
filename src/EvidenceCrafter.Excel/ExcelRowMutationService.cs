@@ -4,6 +4,8 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Security.Cryptography;
 using System.Text;
+using System.Diagnostics;
+using System.Text.Json;
 using EvidenceCrafter.Core.Models;
 using EvidenceCrafter.Core.Services;
 
@@ -17,7 +19,18 @@ namespace EvidenceCrafter.Excel;
 public sealed class ExcelRowMutationService
 {
   private const int MaximumDependencyCells = 250_000;
+  [ThreadStatic] internal static Action<string, double>? StageMeasured;
+  [ThreadStatic] internal static Action<string>? StageReached;
+  [ThreadStatic] internal static Action<int, int>? ShapeBoundsReadObserved;
   private readonly TrailingRowDeletionPlanner deletionPlanner;
+
+  private static T Measure<T>(string stage, Func<T> read)
+  {
+    if (StageMeasured is null) return read();
+    var timer = Stopwatch.StartNew();
+    try { return read(); }
+    finally { StageMeasured(stage, timer.Elapsed.TotalMilliseconds); }
+  }
 
   public ExcelRowMutationService(TrailingRowDeletionPlanner? deletionPlanner = null)
   {
@@ -144,6 +157,17 @@ public sealed class ExcelRowMutationService
         insertion.Count,
         insertion.Reason,
         UseActiveCell: false));
+  }
+
+  internal RowMutationResult TrimCaseTail(WorkbookIdentity workbook, string worksheetName, int caseRow, int tailRows, bool requireBothSides)
+  {
+    ArgumentNullException.ThrowIfNull(workbook);
+    ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
+    if (caseRow < 1 || caseRow > ExcelWorksheetLimits.MaximumRow) throw new ArgumentOutOfRangeException(nameof(caseRow));
+    if (tailRows < 0) throw new ArgumentOutOfRangeException(nameof(tailRows));
+    return Execute(workbook, worksheetName, new RowMutationPlan(RowMutationOperation.Delete, 0, 0,
+      "Trim the current CASE tail.", UseActiveCell: false, CaptureUndoSnapshot: true,
+      MaintenanceRequest: new(caseRow, tailRows, requireBothSides)));
   }
 
   /// <summary>Normalizes only the rows just inserted by this application.</summary>
@@ -278,7 +302,7 @@ public sealed class ExcelRowMutationService
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentNullException.ThrowIfNull(snapshot);
-    if (snapshot.IsDisposed || !File.Exists(snapshot.BackupPath))
+    if (snapshot.RecoveryRequired || snapshot.IsDisposed || !File.Exists(snapshot.BackupPath))
     {
       return RowMutationResult.Failed(RowMutationOperation.Insert, snapshot.WorksheetName, "Undo用の行Snapshotは利用できません。");
     }
@@ -305,7 +329,7 @@ public sealed class ExcelRowMutationService
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentNullException.ThrowIfNull(snapshot);
-    if (snapshot.IsDisposed || !snapshot.Matches(workbook))
+    if (snapshot.RecoveryRequired || snapshot.IsDisposed || !snapshot.Matches(workbook))
     {
       return RowMutationResult.Failed(RowMutationOperation.Delete, snapshot.WorksheetName, "行SnapshotまたはWorkbook接続世代が無効なためRedoできません。");
     }
@@ -683,14 +707,16 @@ public sealed class ExcelRowMutationService
     object worksheet,
     int firstRow,
     int lastRow,
-    out int lastContentRow)
+    out int lastContentRow,
+    EvidenceCaseLayout? managedLayout = null,
+    HashSet<EvidenceSide>? managedSides = null)
   {
     ValidateRowRange(firstRow, lastRow);
-    var commentRows = ReadRowsWithComments(worksheet, firstRow, lastRow);
-    var hyperlinkRows = ReadRowsWithHyperlinks(worksheet, firstRow, lastRow);
-    var shapeRows = ReadRowsWithShapes(worksheet, firstRow, lastRow);
-    var rangeHasNoMerges = RangeHasNoMerges(worksheet, firstRow, lastRow);
-    var contentRows = ReadRowsWithCellContent(worksheet, firstRow, lastRow);
+    var commentRows = Measure("RowSafety.Comments", () => ReadRowsWithComments(worksheet, firstRow, lastRow));
+    var hyperlinkRows = Measure("RowSafety.Hyperlinks", () => ReadRowsWithHyperlinks(worksheet, firstRow, lastRow));
+    var shapeRows = Measure("RowSafety.Shapes", () => ReadRowsWithShapes(worksheet, firstRow, lastRow, managedLayout, managedSides));
+    var rangeHasNoMerges = Measure("RowSafety.Merges", () => RangeHasNoMerges(worksheet, firstRow, lastRow));
+    var contentRows = Measure("RowSafety.Content", () => ReadRowsWithCellContent(worksheet, firstRow, lastRow));
     object? rows = null;
     try
     {
@@ -815,9 +841,12 @@ public sealed class ExcelRowMutationService
     }
   }
 
-  private static HashSet<int> ReadRowsWithShapes(object worksheet, int firstRow, int lastRow)
+  private static HashSet<int> ReadRowsWithShapes(object worksheet, int firstRow, int lastRow,
+    EvidenceCaseLayout? managedLayout = null, HashSet<EvidenceSide>? managedSides = null)
   {
     var result = new HashSet<int>();
+    var topReads = 0;
+    var bottomReads = 0;
     object? shapes = null;
     try
     {
@@ -833,9 +862,23 @@ public sealed class ExcelRowMutationService
           shape = InvokeMethod(shapes, "Item", index) ??
             throw new InvalidOperationException("The worksheet Shape could not be resolved.");
           topLeftCell = GetRequiredProperty(shape, "TopLeftCell");
-          bottomRightCell = GetRequiredProperty(shape, "BottomRightCell");
+          topReads++;
           var shapeStartRow = Convert.ToInt32(GetRequiredProperty(topLeftCell, "Row"), CultureInfo.InvariantCulture);
+          if (shapeStartRow > lastRow) continue;
+          bottomRightCell = GetRequiredProperty(shape, "BottomRightCell");
+          bottomReads++;
           var shapeEndRow = Convert.ToInt32(GetRequiredProperty(bottomRightCell, "Row"), CultureInfo.InvariantCulture);
+          if (managedLayout is not null && managedSides is not null &&
+            shapeStartRow <= managedLayout.EndRow && shapeEndRow >= managedLayout.StartRow + 1 &&
+            ManagedShapeMetadata.IsManagedName(Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.InvariantCulture) ?? string.Empty) &&
+            TryGetProperty(shape, "AlternativeText", out var alternativeText) &&
+            ManagedShapeMetadata.TryParse(Convert.ToString(alternativeText, CultureInfo.InvariantCulture), out _))
+          {
+            var column = Convert.ToInt32(GetRequiredProperty(topLeftCell, "Column"), CultureInfo.InvariantCulture);
+            foreach (var side in new[] { EvidenceSide.New, EvidenceSide.Old })
+              if (managedLayout.SupportsSide(side) && column >= managedLayout.RegionFor(side).FirstColumn + 1 &&
+                column <= managedLayout.RegionFor(side).LastColumn) managedSides.Add(side);
+          }
           for (var row = Math.Max(firstRow, shapeStartRow); row <= Math.Min(lastRow, shapeEndRow); row++)
           {
             result.Add(row);
@@ -853,11 +896,13 @@ public sealed class ExcelRowMutationService
     }
     catch (Exception exception) when (IsAutomationFailure(exception))
     {
+      managedSides?.Clear();
       return AllRows(firstRow, lastRow);
     }
     finally
     {
       ComRelease.Release(shapes);
+      ShapeBoundsReadObserved?.Invoke(topReads, bottomReads);
     }
   }
 
@@ -979,6 +1024,8 @@ public sealed class ExcelRowMutationService
     var resolvedWorksheetName = worksheetName;
     var resolvedStartRow = plan.StartRow;
     var resolvedCount = plan.Count;
+    var mutationAttempted = false;
+    var mutationCompleted = false;
     try
     {
       if (IsWorkbookReadOnly(workbook) || !WorkbookWindowMatchesIdentity(workbook, identity))
@@ -1015,18 +1062,37 @@ public sealed class ExcelRowMutationService
           $"シート {resolvedWorksheetName} は保護されています。保護を解除してから行を変更してください。");
       }
 
-      if (plan.DeletionRequest is not null)
+      var deletionRequest = plan.DeletionRequest;
+      EvidenceCaseLayout? maintenanceLayout = null;
+      if (plan.MaintenanceRequest is { } maintenance)
       {
+        var captured = Measure("Maintenance.Structure", () => ExcelSheetSnapshotService.CaptureForMaintenance(
+          application, workbook, identity, resolvedWorksheetName, maintenance.CaseRow));
+        if (!captured.Succeeded || captured.Snapshot is null)
+          return RowMutationResult.Failed(plan.Operation, resolvedWorksheetName, captured.Message);
+        var analyzed = new CaseLayoutAnalyzer().Analyze(captured.Snapshot.LayoutSignals with { ActiveRow = maintenance.CaseRow });
+        if (!analyzed.IsSafe || analyzed.Layout is null)
+          return RowMutationResult.Failed(plan.Operation, resolvedWorksheetName, $"Case末尾を安全に解析できないため行整理を行いません: {string.Join(" ", analyzed.Reasons)}");
+        maintenanceLayout = analyzed.Layout;
+        if (!maintenanceLayout.CanDeleteTrailingRows || maintenanceLayout.Kind == SideLayoutKind.NewOnly)
+          return RowMutationResult.NoChange(plan.Operation, resolvedWorksheetName, "NewのみのCase、または最終Caseのため自動行整理は行いません。");
+        deletionRequest = new(maintenanceLayout.StartRow, maintenanceLayout.EndRow, maintenance.TailRows);
+      }
+      if (deletionRequest is not null)
+      {
+        var managedSides = new HashSet<EvidenceSide>();
         var snapshot = CaptureRowSafetySnapshot(
           worksheet,
-          plan.DeletionRequest.CaseStartRow,
-          plan.DeletionRequest.CaseEndRow,
-          out var lastContentRow);
+          deletionRequest.CaseStartRow,
+          deletionRequest.CaseEndRow,
+          out var lastContentRow, plan.MaintenanceRequest?.RequireBothSides == true ? maintenanceLayout : null, managedSides);
+        if (plan.MaintenanceRequest?.RequireBothSides == true && managedSides.Count != 2)
+          return RowMutationResult.NoChange(plan.Operation, resolvedWorksheetName, "NewとOldの両方に画像がそろっていないため、Case末尾は整理していません。");
         var plannedRows = deletionPlanner.Plan(
-          plan.DeletionRequest.CaseStartRow,
-          plan.DeletionRequest.CaseEndRow,
+          deletionRequest.CaseStartRow,
+          deletionRequest.CaseEndRow,
           lastContentRow,
-          plan.DeletionRequest.TailRows,
+          deletionRequest.TailRows,
           snapshot);
         if (plannedRows.Count == 0)
         {
@@ -1038,8 +1104,8 @@ public sealed class ExcelRowMutationService
 
         ValidateTrailingPlan(
           plannedRows,
-          plan.DeletionRequest.CaseStartRow,
-          plan.DeletionRequest.CaseEndRow);
+          deletionRequest.CaseStartRow,
+          deletionRequest.CaseEndRow);
         resolvedStartRow = plannedRows[0];
         resolvedCount = plannedRows.Count;
       }
@@ -1141,8 +1207,10 @@ public sealed class ExcelRowMutationService
         throw new InvalidOperationException("The requested Excel row range could not be resolved.");
       if (plan.InsertedRowHeightPoints is double insertedRowHeight)
       {
+        mutationAttempted = true;
         SetProperty(targetRows, "Hidden", false);
         SetProperty(targetRows, "RowHeight", insertedRowHeight);
+        mutationCompleted = true;
         return RowMutationResult.SucceededResult(
           plan.Operation,
           resolvedWorksheetName,
@@ -1153,7 +1221,7 @@ public sealed class ExcelRowMutationService
       }
       if (plan.CaptureUndoSnapshot)
       {
-        EnsureNoExternalWorksheetFormulas(workbook, resolvedWorksheetName);
+        _ = Measure("Dependencies.ExternalSheets", () => { EnsureNoExternalWorksheetFormulas(workbook, resolvedWorksheetName); return true; });
         deletionSnapshot = CaptureNativeRowSnapshot(
           application,
           workbook,
@@ -1162,26 +1230,63 @@ public sealed class ExcelRowMutationService
           resolvedWorksheetName,
           resolvedStartRow,
           resolvedCount);
-        deletionSnapshot.PreDeletionFormulas = CaptureFormulaMap(worksheet);
-        deletionSnapshot.PreDeletionNames = CaptureNameMap(workbook);
-        deletionSnapshot.PreDeletionPrintArea = CapturePrintArea(worksheet);
+        StageReached?.Invoke("Dependencies.Pre");
+        deletionSnapshot.PreDeletionFormulas = Measure("Dependencies.Pre.Formulas", () => CaptureFormulaMap(worksheet));
+        deletionSnapshot.PreDeletionNames = Measure("Dependencies.Pre.Names", () => CaptureNameMap(workbook));
+        deletionSnapshot.PreDeletionPrintArea = Measure("Dependencies.Pre.PrintArea", () => CapturePrintArea(worksheet));
+        // Saving the native workbook is a long COM operation; recheck live deletion
+        // safety afterwards instead of carrying the earlier shape/content observations.
+        StageReached?.Invoke("Rows.FinalSafety");
+        var finalSides = new HashSet<EvidenceSide>();
+        var finalContentRow = 0;
+        var finalSafety = Measure("RowSafety.Final", () => CaptureRowSafetySnapshot(
+          worksheet, deletionRequest?.CaseStartRow ?? resolvedStartRow,
+          deletionRequest?.CaseEndRow ?? checked(resolvedStartRow + resolvedCount - 1), out finalContentRow,
+          plan.MaintenanceRequest?.RequireBothSides == true ? maintenanceLayout : null, finalSides));
+        var finalPlan = deletionRequest is null ? null : deletionPlanner.Plan(deletionRequest.CaseStartRow,
+          deletionRequest.CaseEndRow, finalContentRow, deletionRequest.TailRows, finalSafety);
+        object? retainedRows = null;
+        int retainedCount;
+        try
+        {
+          retainedRows = GetRequiredProperty(targetRows, "Rows");
+          retainedCount = Convert.ToInt32(GetRequiredProperty(retainedRows, "Count"), CultureInfo.InvariantCulture);
+        }
+        finally { ComRelease.Release(retainedRows); }
+        if (finalSafety.Any(state => state.Row >= resolvedStartRow && state.Row < resolvedStartRow + resolvedCount && !state.CanDelete) ||
+          (finalPlan is not null && (finalPlan.Count != resolvedCount || finalPlan[0] != resolvedStartRow)) ||
+          (plan.MaintenanceRequest?.RequireBothSides == true && finalSides.Count != 2) ||
+          retainedCount != resolvedCount ||
+          Convert.ToInt32(GetRequiredProperty(targetRows, "Row"), CultureInfo.InvariantCulture) != resolvedStartRow ||
+          !WorkbookWindowMatchesIdentity(workbook, identity) || IsWorkbookReadOnly(workbook))
+        {
+          deletionSnapshot.Dispose();
+          deletionSnapshot = null;
+          return RowMutationResult.NoChange(plan.Operation, resolvedWorksheetName, "退避中に対象行の状態が変わったため、行は削除していません。");
+        }
       }
 
-      InvokeMethod(targetRows, plan.Operation is RowMutationOperation.Insert ? "Insert" : "Delete");
+      StageReached?.Invoke("Rows.BeforeMutation");
+      mutationAttempted = true;
+      _ = Measure($"Rows.{plan.Operation}", () => InvokeMethod(targetRows, plan.Operation is RowMutationOperation.Insert ? "Insert" : "Delete"));
+      mutationCompleted = true;
+      StageReached?.Invoke("Rows.AfterMutation");
 
       if (deletionSnapshot is not null)
       {
-        deletionSnapshot.PostDeleteFingerprint = CaptureRowFingerprint(
+        StageReached?.Invoke("PostDeleteFingerprint");
+        deletionSnapshot.PostDeleteFingerprint = Measure("Fingerprint", () => CaptureRowFingerprint(
           worksheet,
           Math.Max(1, resolvedStartRow - 1),
           Math.Min(resolvedCount + 2, ExcelWorksheetLimits.MaximumRow - Math.Max(1, resolvedStartRow - 1) + 1),
-          includeWorksheetExtent: true);
-        deletionSnapshot.PostDeletionFormulas = CaptureFormulaMap(worksheet);
-        deletionSnapshot.PostDeletionNames = CaptureNameMap(workbook);
-        deletionSnapshot.PostDeletionPrintArea = CapturePrintArea(worksheet);
+          includeWorksheetExtent: true));
+        StageReached?.Invoke("Dependencies.Post");
+        deletionSnapshot.PostDeletionFormulas = Measure("Dependencies.Post.Formulas", () => CaptureFormulaMap(worksheet));
+        deletionSnapshot.PostDeletionNames = Measure("Dependencies.Post.Names", () => CaptureNameMap(workbook));
+        deletionSnapshot.PostDeletionPrintArea = Measure("Dependencies.Post.PrintArea", () => CapturePrintArea(worksheet));
       }
 
-      if (plan.RestoreSnapshot is not null)
+      if (plan.RestoreSnapshot is not null && plan.Operation is RowMutationOperation.Insert)
       {
         // Excel may retarget the Range object passed to Insert to the rows that were shifted.
         // Resolve the newly inserted band again before pasting the native snapshot.
@@ -1233,13 +1338,19 @@ public sealed class ExcelRowMutationService
           : $"安全な末尾 {resolvedCount} 行を {resolvedWorksheetName}!R{resolvedStartRow} から削除しました（未保存）。",
         deletionSnapshot);
     }
-    catch (Exception exception) when (IsAutomationFailure(exception))
+    catch (Exception exception) when (exception is not OutOfMemoryException)
     {
-      deletionSnapshot?.Dispose();
-      return RowMutationResult.Failed(
+      var recovery = deletionSnapshot ?? plan.RestoreSnapshot;
+      if (mutationAttempted) recovery?.RetainForRecovery(!mutationCompleted, exception.Message);
+      else deletionSnapshot?.Dispose();
+      var message = $"Excelへの行変更に失敗しました (0x{GetAutomationHResult(exception):X8})。{exception.Message} 変更結果を確認してください。";
+      if (mutationAttempted) message += " 行変更済み、または結果を確認できません。アプリからの変更を停止し、Workbookを保存せず確認してください。";
+      if (recovery?.RecoveryRequired == true) message += $" 復旧用退避: {recovery.BackupPath}";
+      return new RowMutationResult(false, mutationCompleted,
         plan.Operation,
         resolvedWorksheetName,
-        $"Excelへの行変更に失敗しました (0x{GetAutomationHResult(exception):X8})。{exception.Message} 変更結果を確認してください。");
+        resolvedStartRow, resolvedCount, message, recovery?.RecoveryRequired == true ? recovery : null)
+        { MutationMayHaveOccurred = mutationAttempted };
     }
     finally
     {
@@ -1549,6 +1660,7 @@ public sealed class ExcelRowMutationService
     object? usedColumns = null;
     object? usedRows = null;
     object? rows = null;
+    object? fingerprintBlock = null, blockFirst = null, blockLast = null;
     try
     {
       usedRange = GetRequiredProperty(worksheet, "UsedRange");
@@ -1560,6 +1672,27 @@ public sealed class ExcelRowMutationService
       {
         throw new InvalidOperationException("行状態の安全確認範囲が250,000セルを超えるため、履歴操作を中止しました。");
       }
+      object? values = null, formulas = null, numberFormat = null, wrapText = null;
+      var hasValues = false;
+      var hasFormulas = false;
+      try
+      {
+        blockFirst = InvokeProperty(worksheet, "Cells", startRow, firstColumn);
+        blockLast = InvokeProperty(worksheet, "Cells", checked(startRow + count - 1), checked(firstColumn + columnCount - 1));
+        fingerprintBlock = GetRequiredProperty(worksheet, "Range", blockFirst!, blockLast!);
+        hasValues = TryGetProperty(fingerprintBlock, "Value2", out values) && IsFingerprintMatrix(values, count, columnCount);
+        hasFormulas = TryGetProperty(fingerprintBlock, "Formula", out formulas) && IsFingerprintMatrix(formulas, count, columnCount);
+        _ = TryGetProperty(fingerprintBlock, "NumberFormat", out numberFormat);
+        _ = TryGetProperty(fingerprintBlock, "WrapText", out wrapText);
+      }
+      catch (Exception exception) when (IsAutomationFailure(exception))
+      {
+        // Keep the existing cell-by-cell reads if a provider rejects the block.
+      }
+      if (hasValues) StageMeasured?.Invoke("Fingerprint.Value2.Bulk", 0);
+      if (hasFormulas) StageMeasured?.Invoke("Fingerprint.Formula.Bulk", 0);
+      if (numberFormat is string) StageMeasured?.Invoke("Fingerprint.NumberFormat.Bulk", 0);
+      if (wrapText is bool) StageMeasured?.Invoke("Fingerprint.WrapText.Bulk", 0);
       var builder = new StringBuilder();
       if (includeWorksheetExtent)
       {
@@ -1595,11 +1728,15 @@ public sealed class ExcelRowMutationService
           try
           {
             cell = InvokeProperty(worksheet, "Cells", row, column);
-            AppendFingerprintProperty(builder, cell, "Value2");
-            AppendFingerprintProperty(builder, cell, "Formula");
-            AppendFingerprintProperty(builder, cell, "NumberFormat");
+            if (hasValues) AppendFingerprintValue(builder, MatrixValue(values, row - startRow, column - firstColumn, count, columnCount));
+            else AppendFingerprintProperty(builder, cell, "Value2", reportFallback: true);
+            if (hasFormulas) AppendFingerprintValue(builder, MatrixValue(formulas, row - startRow, column - firstColumn, count, columnCount));
+            else AppendFingerprintProperty(builder, cell, "Formula", reportFallback: true);
+            if (numberFormat is string uniformFormat) AppendFingerprintValue(builder, uniformFormat);
+            else AppendFingerprintProperty(builder, cell, "NumberFormat", reportFallback: true);
             AppendFingerprintProperty(builder, cell, "Style");
-            AppendFingerprintProperty(builder, cell, "WrapText");
+            if (wrapText is bool uniformWrap) AppendFingerprintValue(builder, uniformWrap);
+            else AppendFingerprintProperty(builder, cell, "WrapText", reportFallback: true);
             AppendFingerprintProperty(builder, cell, "HorizontalAlignment");
             AppendFingerprintProperty(builder, cell, "VerticalAlignment");
             if (TryGetProperty(cell!, "Font", out font) && font is not null)
@@ -1641,6 +1778,7 @@ public sealed class ExcelRowMutationService
     }
     finally
     {
+      ComRelease.Release(fingerprintBlock); ComRelease.Release(blockLast); ComRelease.Release(blockFirst);
       ComRelease.Release(rows);
       ComRelease.Release(usedRows);
       ComRelease.Release(usedColumns);
@@ -1648,8 +1786,9 @@ public sealed class ExcelRowMutationService
     }
   }
 
-  private static void AppendFingerprintProperty(StringBuilder builder, object? target, string propertyName)
+  private static void AppendFingerprintProperty(StringBuilder builder, object? target, string propertyName, bool reportFallback = false)
   {
+    if (reportFallback) StageMeasured?.Invoke($"Fingerprint.{propertyName}.CellFallback", 0);
     if (target is null)
     {
       builder.Append("<null>;");
@@ -1665,6 +1804,14 @@ public sealed class ExcelRowMutationService
       builder.Append("<unsupported>;");
     }
   }
+
+  private static void AppendFingerprintValue(StringBuilder builder, object? value) =>
+    builder.Append(value is null ? "<unsupported>" : Convert.ToString(value, CultureInfo.InvariantCulture)).Append(';');
+
+  private static bool IsFingerprintMatrix(object? value, int rows, int columns) =>
+    value is Array array
+      ? array.Rank == 2 && array.GetLength(0) == rows && array.GetLength(1) == columns
+      : rows == 1 && columns == 1;
 
   private static RowDeletionSnapshot CaptureNativeRowSnapshot(
     object application,
@@ -1687,7 +1834,8 @@ public sealed class ExcelRowMutationService
     try
     {
       workbooks = GetRequiredProperty(application, "Workbooks");
-      backupWorkbook = InvokeMethod(workbooks, "Add") ?? throw new InvalidOperationException("Excel backup Workbook could not be created.");
+      StageReached?.Invoke("Backup.Add");
+      backupWorkbook = Measure("Backup.Add", () => InvokeMethod(workbooks, "Add", -4167)) ?? throw new InvalidOperationException("Excel backup Workbook could not be created.");
       worksheets = GetRequiredProperty(backupWorkbook, "Worksheets");
       backupSheet = InvokeProperty(worksheets, "Item", 1) ?? throw new InvalidOperationException("Excel backup Worksheet could not be created.");
       backupRows = GetRequiredProperty(backupSheet, "Rows");
@@ -1695,7 +1843,8 @@ public sealed class ExcelRowMutationService
       var destinationRows = InvokeProperty(firstBackupRow, "Resize", count) ?? throw new InvalidOperationException("Excel backup row range could not be resolved.");
       try
       {
-        _ = InvokeMethod(sourceRows, "Copy", destinationRows);
+        StageReached?.Invoke("Backup.Copy");
+        _ = Measure("Backup.Copy", () => InvokeMethod(sourceRows, "Copy", destinationRows));
       }
       finally
       {
@@ -1703,8 +1852,9 @@ public sealed class ExcelRowMutationService
         ComRelease.Release(destinationRows);
       }
 
-      _ = InvokeMethod(backupWorkbook, "SaveAs", path, 51);
-      _ = InvokeMethod(backupWorkbook, "Close", false);
+      StageReached?.Invoke("Backup.SaveAs");
+      _ = Measure("Backup.SaveAs", () => InvokeMethod(backupWorkbook, "SaveAs", path, 51));
+      _ = Measure("Backup.Close", () => InvokeMethod(backupWorkbook, "Close", false));
       ComRelease.Release(backupWorkbook);
       backupWorkbook = null;
       InvokeMethod(workbook, "Activate");
@@ -2023,9 +2173,11 @@ public sealed class ExcelRowMutationService
     bool ExactSafeDeletion = false,
     bool CaptureUndoSnapshot = false,
     RowDeletionSnapshot? RestoreSnapshot = null,
-    double? InsertedRowHeightPoints = null);
+    double? InsertedRowHeightPoints = null,
+    CaseMaintenanceRequest? MaintenanceRequest = null);
 
   private sealed record TrailingDeletionRequest(int CaseStartRow, int CaseEndRow, int TailRows);
+  private sealed record CaseMaintenanceRequest(int CaseRow, int TailRows, bool RequireBothSides);
 
   private static class NativeMethods
   {
@@ -2070,6 +2222,7 @@ public sealed record RowMutationResult(
   string Message,
   RowDeletionSnapshot? DeletionSnapshot = null)
 {
+  public bool MutationMayHaveOccurred { get; init; }
   public static RowMutationResult SucceededResult(
     RowMutationOperation operation,
     string worksheetName,
@@ -2129,6 +2282,26 @@ public sealed class RowDeletionSnapshot : IDisposable
   internal string? PreDeletionPrintArea { get; set; }
   internal string? PostDeletionPrintArea { get; set; }
   public bool IsDisposed => Volatile.Read(ref disposed) != 0;
+  public bool RecoveryRequired { get; private set; }
+  public string? RecoveryBackupPath => RecoveryRequired ? BackupPath : null;
+
+  internal void RetainForRecovery(bool outcomeUnknown, string reason)
+  {
+    RecoveryRequired = true;
+    try
+    {
+      File.WriteAllText(BackupPath + ".recovery.json", JsonSerializer.Serialize(new
+      {
+        WorkbookFullPath, WorksheetName, StartRow, Count, outcomeUnknown, reason,
+        Formulas = PreDeletionFormulas?.Select(pair => new { pair.Key.Row, pair.Key.Column, Formula = pair.Value }),
+        Names = PreDeletionNames, PrintArea = PreDeletionPrintArea,
+      }));
+    }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+    {
+      // The saved native backup remains usable even if recovery metadata cannot be written.
+    }
+  }
 
   internal bool Matches(WorkbookIdentity workbook) =>
     workbook.ProcessId == ProcessId &&
@@ -2137,6 +2310,7 @@ public sealed class RowDeletionSnapshot : IDisposable
 
   public void Dispose()
   {
+    if (RecoveryRequired) return;
     if (Interlocked.Exchange(ref disposed, 1) != 0)
     {
       return;

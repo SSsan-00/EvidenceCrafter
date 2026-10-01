@@ -1,6 +1,7 @@
 using System.Drawing.Imaging;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using EvidenceCrafter.Core.Models;
 using EvidenceCrafter.Core.Services;
 using EvidenceCrafter.Excel;
@@ -69,6 +70,7 @@ public sealed class MainForm : Form
   private EvidenceCrafterSettings settings = new();
   private GlobalShortcutRegistration? globalShortcut;
   private int mutationInProgress;
+  private string? rowRecoveryMessage;
   private bool screenCaptureInProgress;
   private readonly ImageWorkflowGate imageWorkflow = new();
   private bool placementCompleted;
@@ -1623,6 +1625,7 @@ public sealed class MainForm : Form
         preparedAnalysis,
         requestedCaseLabel));
       SetStatus(result.Message);
+      if (result.RowFailure is { } rowFailure) StopAfterRowFailure(rowFailure, "自動配置の行変更に失敗しました。");
       if (!result.Succeeded)
       {
         return;
@@ -1634,13 +1637,16 @@ public sealed class MainForm : Form
       using var stream = new MemoryStream();
       imageCopy.Save(stream, ImageFormat.Png);
       RowDeletionSnapshot? cleanupSnapshot = null;
+      var cleanupFailed = false;
       if (result.Analysis?.CompletesCaseAfterPlacement == true)
       {
         SetStatus("New／OldがそろったためCASE末尾を整理しています…");
         var cleanup = await StaTask.Run(() => caseMaintenanceService.TrimCompletedCaseTail(
           workbook,
           result.PlacedImages[^1].WorksheetName,
-          result.PlacedImages[^1].Target.Metadata.AnchorCell.Row));
+          result.PlacedImages[^1].Target.TopLeftCell.Row));
+        cleanupFailed = StopAfterRowFailure(cleanup, "画像は配置済みですが、CASE末尾整理に失敗しました。");
+        if (rowRecoveryMessage is not null) return;
         cleanupSnapshot = cleanup.Changed ? cleanup.DeletionSnapshot : null;
       }
       AddAutomaticPlacementHistory(
@@ -1652,6 +1658,7 @@ public sealed class MainForm : Form
         cleanupSnapshot,
         result.Analysis!.LayoutAnalysis!.Layout!,
         result.ReferenceResize);
+      if (cleanupFailed) return;
 
       WriteDiagnostic(
         DiagnosticEventKind.MutationResult,
@@ -1691,7 +1698,7 @@ public sealed class MainForm : Form
     {
       try
       {
-        File.Delete(imagePath);
+        if (rowRecoveryMessage is null) File.Delete(imagePath);
       }
       catch (IOException)
       {
@@ -1814,6 +1821,7 @@ public sealed class MainForm : Form
         worksheetName,
         count));
       SetStatus(result.Message);
+      if (StopAfterRowFailure(result, "行変更に失敗しました。")) return;
       if (result.Succeeded && result.Changed)
       {
         AddRowInsertionHistory(workbook, result.WorksheetName, result.StartRow, result.Count);
@@ -1956,6 +1964,7 @@ public sealed class MainForm : Form
         caseEndRow,
         tailRows: 4));
       SetStatus(result.Message);
+      if (StopAfterRowFailure(result, "行削除に失敗しました。")) return;
       if (result.Succeeded && result.Changed)
       {
         AddRowDeletionHistory(
@@ -2031,6 +2040,7 @@ public sealed class MainForm : Form
 
       var imagePath = Path.Combine(Path.GetTempPath(), "EvidenceCrafter", $"replace-{Guid.NewGuid():N}.png");
       var originalPath = Path.Combine(Path.GetTempPath(), "EvidenceCrafter", $"replace-original-{Guid.NewGuid():N}.png");
+      var preserveOriginal = false;
       try
       {
         Directory.CreateDirectory(Path.GetDirectoryName(imagePath)!);
@@ -2057,6 +2067,11 @@ public sealed class MainForm : Form
           settings.HorizontalMarginPoints));
         if (!prepared.Succeeded)
         {
+          if (prepared.RowFailure is { } rowFailure)
+          {
+            StopAfterRowFailure(rowFailure, "差し替え準備の行変更に失敗しました。");
+            if (rowRecoveryMessage is not null) return;
+          }
           if (prepared.Insertion is not null)
           {
             _ = await RunRowHistoryOperationAsync(() => rowMutationService.DeleteRowsIfSafe(
@@ -2089,7 +2104,15 @@ public sealed class MainForm : Form
           var cleanup = await StaTask.Run(() => caseMaintenanceService.TrimCaseTail(
             workbook,
             result.After.WorksheetName,
-            result.After.Metadata.AnchorCell.Row));
+            result.After.TopLeftCell.Row));
+          var cleanupFailed = StopAfterRowFailure(cleanup, "画像は差し替え済みですが、CASE末尾整理に失敗しました。");
+          if (rowRecoveryMessage is not null)
+          {
+            pendingGrowthInsertion = null;
+            preserveOriginal = true;
+            PreserveImageRecovery(originalPath, workbook, selection.Shape);
+            return;
+          }
           AddManagedReplacementHistory(
             workbook,
             selection.Shape,
@@ -2100,6 +2123,7 @@ public sealed class MainForm : Form
             prepared.Insertion,
             cleanup.Changed ? cleanup.DeletionSnapshot : null);
           pendingGrowthInsertion = null;
+          if (cleanupFailed) return;
         }
         else if (prepared.Insertion is not null)
         {
@@ -2120,7 +2144,7 @@ public sealed class MainForm : Form
         try
         {
           File.Delete(imagePath);
-          File.Delete(originalPath);
+          if (!preserveOriginal) File.Delete(originalPath);
         }
         catch (IOException)
         {
@@ -2134,7 +2158,7 @@ public sealed class MainForm : Form
     }
     finally
     {
-      if (pendingGrowthInsertion is not null)
+      if (pendingGrowthInsertion is not null && rowRecoveryMessage is null)
       {
         _ = await RunRowHistoryOperationAsync(() => rowMutationService.DeleteRowsIfSafe(
           workbook,
@@ -2180,6 +2204,7 @@ public sealed class MainForm : Form
       }
 
       var originalPath = Path.Combine(Path.GetTempPath(), "EvidenceCrafter", $"delete-original-{Guid.NewGuid():N}.png");
+      var preserveOriginal = false;
       try
       {
         var exported = await ExportManagedShapePreservingClipboardAsync(
@@ -2200,12 +2225,20 @@ public sealed class MainForm : Form
           var cleanup = await StaTask.Run(() => caseMaintenanceService.TrimCaseTail(
             workbook,
             selection.Shape.WorksheetName,
-            selection.Shape.Metadata.AnchorCell.Row));
+            selection.Shape.TopLeftCell.Row));
+          var cleanupFailed = StopAfterRowFailure(cleanup, "画像は削除済みですが、CASE末尾整理に失敗しました。");
+          if (rowRecoveryMessage is not null)
+          {
+            preserveOriginal = true;
+            PreserveImageRecovery(originalPath, workbook, selection.Shape);
+            return;
+          }
           AddManagedDeletionHistory(
             workbook,
             selection.Shape,
             originalPng,
             cleanup.Changed ? cleanup.DeletionSnapshot : null);
+          if (cleanupFailed) return;
         }
         WriteDiagnostic(
           DiagnosticEventKind.MutationResult,
@@ -2215,7 +2248,7 @@ public sealed class MainForm : Form
       finally
       {
         clipboardPreviewOpen = false;
-        try { File.Delete(originalPath); } catch (IOException) { }
+        try { if (!preserveOriginal) File.Delete(originalPath); } catch (IOException) { }
       }
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
@@ -2562,6 +2595,8 @@ public sealed class MainForm : Form
         if (!await placementEntry.Undo()) return false;
         var restored = await StaTask.Run(() => referenceResize.SetApplied(workbook, false));
         if (restored.Succeeded) return true;
+        StopAfterRowFailure(restored, "参照画像のUndoに失敗しました。");
+        if (rowRecoveryMessage is not null) return false;
         var compensated = await placementEntry.Redo();
         SetStatus(restored.Message + (compensated ? "" : " 配置の復元にも失敗しました。状態を確認してください。"));
         return false;
@@ -2569,10 +2604,10 @@ public sealed class MainForm : Form
       Redo = async () =>
       {
         var resized = await StaTask.Run(() => referenceResize.SetApplied(workbook, true));
-        if (!resized.Succeeded) { SetStatus(resized.Message); return false; }
+        if (!resized.Succeeded) { StopAfterRowFailure(resized, "参照画像のRedoに失敗しました。"); return false; }
         if (await placementEntry.Redo()) return true;
         var restored = await StaTask.Run(() => referenceResize.SetApplied(workbook, false));
-        if (!restored.Succeeded) SetStatus(restored.Message);
+        if (!restored.Succeeded) StopAfterRowFailure(restored, "参照画像の復元に失敗しました。");
         return false;
       },
     }, workbook);
@@ -2835,7 +2870,28 @@ public sealed class MainForm : Form
   {
     var result = await StaTask.Run(operation);
     SetStatus(result.Message);
+    if (StopAfterRowFailure(result, "行の履歴操作に失敗しました。") && rowRecoveryMessage is not null)
+      throw new InvalidOperationException(rowRecoveryMessage);
     return result.Succeeded && result.Changed;
+  }
+
+  private bool StopAfterRowFailure(RowMutationResult result, string context)
+  {
+    if (result.Succeeded) return false;
+    var message = context + " " + result.Message;
+    if (result.MutationMayHaveOccurred || result.DeletionSnapshot?.RecoveryRequired == true)
+      rowRecoveryMessage = message;
+    SetStatus(message);
+    return true;
+  }
+
+  private void PreserveImageRecovery(string path, WorkbookIdentity workbook, ManagedShapeTarget original)
+  {
+    rowRecoveryMessage += $" 元画像の復旧用退避: {path}";
+    SetStatus(rowRecoveryMessage);
+    try { File.WriteAllText(path + ".recovery.json", JsonSerializer.Serialize(new { workbook.FullPath, OriginalShape = original })); }
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+    { /* The original PNG remains available even when metadata cannot be written. */ }
   }
 
   private void AddHistory(HistoryEntry entry, WorkbookIdentity workbook)
@@ -2940,6 +2996,11 @@ public sealed class MainForm : Form
 
   private bool TryBeginMutation()
   {
+    if (rowRecoveryMessage is not null)
+    {
+      SetStatus(rowRecoveryMessage);
+      return false;
+    }
     if (Interlocked.CompareExchange(ref mutationInProgress, 1, 0) == 0)
     {
       SetMutationActionsEnabled(false);
@@ -2959,14 +3020,14 @@ public sealed class MainForm : Form
   {
     cachedPlacementContext = null;
     Interlocked.Exchange(ref mutationInProgress, 0);
-    SetMutationActionsEnabled(true);
+    SetMutationActionsEnabled(rowRecoveryMessage is null);
     if (CanUpdateUi)
     {
-      replaceImageButton.Enabled = true;
-      deleteImageButton.Enabled = true;
-      previousCaseButton.Enabled = true;
-      nextCaseButton.Enabled = true;
-      captureScreenButton.Enabled = !screenCaptureInProgress;
+      replaceImageButton.Enabled = rowRecoveryMessage is null;
+      deleteImageButton.Enabled = rowRecoveryMessage is null;
+      previousCaseButton.Enabled = rowRecoveryMessage is null;
+      nextCaseButton.Enabled = rowRecoveryMessage is null;
+      captureScreenButton.Enabled = rowRecoveryMessage is null && !screenCaptureInProgress;
     }
   }
 

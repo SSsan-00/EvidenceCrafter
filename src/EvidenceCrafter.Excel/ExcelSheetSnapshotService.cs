@@ -12,6 +12,8 @@ public sealed class ExcelSheetSnapshotService
 {
   [ThreadStatic]
   internal static Action<int, int>? ShapeReadObserved;
+  [ThreadStatic]
+  internal static Action<int, int>? ShapeBoundsReadObserved;
   private const int MaximumSnapshotCells = 250_000;
   private const int NewFirstColumn = 3;
   private const int XlEdgeTop = 8;
@@ -35,6 +37,11 @@ public sealed class ExcelSheetSnapshotService
     bool includeWorksheetNames = false,
     bool includeShapes = true) =>
     CaptureCore(workbook, worksheetName, scopeRow: null, includeWorksheetNames, navigationOnly: true, includeShapes, scopeCaseLabel: null, scopeShapes: false, referenceShapeName: null);
+
+  internal static SheetSnapshotResult CaptureForMaintenance(object application, object workbook,
+    WorkbookIdentity identity, string worksheetName, int caseRow) =>
+    CaptureWorkbook(application, workbook, identity, worksheetName, caseRow, includeWorksheetNames: false,
+      navigationOnly: true, includeShapes: false, scopeCaseLabel: null, scopeShapes: false, referenceShapeName: null);
 
   private static SheetSnapshotResult CaptureCore(
     WorkbookIdentity workbook,
@@ -624,6 +631,8 @@ public sealed class ExcelSheetSnapshotService
     // ponytail: O(N) live bounds scan; use an Excel-side batch reader only if this remains the measured bottleneck.
     object? shapes = null;
     var result = new List<SnapshotShape>();
+    var topReads = 0;
+    var bottomReads = 0;
     try
     {
       shapes = GetRequiredProperty(worksheet, "Shapes");
@@ -642,12 +651,21 @@ public sealed class ExcelSheetSnapshotService
           }
 
           topLeft = GetRequiredProperty(shape, "TopLeftCell");
-          bottomRight = GetRequiredProperty(shape, "BottomRightCell");
+          topReads++;
           var start = ReadShapeCellReference(topLeft);
+          string? name = null;
+          if (start.Row > lastRow)
+          {
+            if (referenceShapeName is null) continue;
+            name = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.CurrentCulture) ?? string.Empty;
+            if (!string.Equals(name, referenceShapeName, StringComparison.Ordinal)) continue;
+          }
+          bottomRight = GetRequiredProperty(shape, "BottomRightCell");
+          bottomReads++;
           var end = ReadShapeCellReference(bottomRight);
           var intersects = end.Row >= firstRow && start.Row <= lastRow;
           if (!intersects && referenceShapeName is null) continue;
-          var name = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.CurrentCulture) ?? string.Empty;
+          name ??= Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.CurrentCulture) ?? string.Empty;
           if (!intersects && !string.Equals(name, referenceShapeName, StringComparison.Ordinal)) continue;
           ManagedShapeMetadata? metadata = null;
           var isManaged = ManagedShapeMetadata.IsManagedName(name) &&
@@ -683,6 +701,7 @@ public sealed class ExcelSheetSnapshotService
       }
 
       ShapeReadObserved?.Invoke(count, result.Count);
+      ShapeBoundsReadObserved?.Invoke(topReads, bottomReads);
       return result;
     }
     finally

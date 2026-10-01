@@ -22,14 +22,14 @@ public sealed class ExcelManagedReplacementLayoutService
     ImageDimensions image,
     double horizontalMarginPoints)
   {
-    var captured = snapshotService.Capture(workbook, target.WorksheetName, target.Metadata.AnchorCell.Row);
+    var captured = snapshotService.Capture(workbook, target.WorksheetName, target.TopLeftCell.Row);
     if (!captured.Succeeded || captured.Snapshot is null)
     {
       return ReplacementLayoutResult.Failed(captured.Message);
     }
 
     var snapshot = captured.Snapshot;
-    var analyzed = layoutAnalyzer.Analyze(snapshot.LayoutSignals with { ActiveRow = target.Metadata.AnchorCell.Row });
+    var analyzed = layoutAnalyzer.Analyze(snapshot.LayoutSignals with { ActiveRow = target.TopLeftCell.Row });
     if (!analyzed.IsSafe || analyzed.Layout is null)
     {
       return ReplacementLayoutResult.Failed($"対象Caseを安全に解析できません: {string.Join(" ", analyzed.Reasons)}");
@@ -78,13 +78,13 @@ public sealed class ExcelManagedReplacementLayoutService
     var mutated = rowMutationService.InsertRows(workbook, target.WorksheetName, insertion);
     if (!mutated.Succeeded || !mutated.Changed)
     {
-      return ReplacementLayoutResult.Failed(mutated.Message);
+      return ReplacementLayoutResult.Failed(mutated.Message) with { RowFailure = mutated };
     }
 
     var insertedHeight = snapshotService.Capture(
       workbook,
       target.WorksheetName,
-      target.Metadata.AnchorCell.Row).Snapshot?.RowHeights
+      target.TopLeftCell.Row).Snapshot?.RowHeights
       .Where(pair => pair.Key >= mutated.StartRow && pair.Key < mutated.StartRow + mutated.Count)
       .Sum(pair => pair.Value) ?? 0;
     if (insertedHeight + 0.05 < extraHeight)
@@ -98,7 +98,7 @@ public sealed class ExcelManagedReplacementLayoutService
           fitted,
           left,
           applied,
-          "追加行の実高が画像に不足し、追加行の復旧にも失敗しました。Workbookを保存せず状態を確認してください。");
+          "追加行の実高が画像に不足し、追加行の復旧にも失敗しました。Workbookを保存せず状態を確認してください。") { RowFailure = reverted };
     }
 
     return new ReplacementLayoutResult(
@@ -117,5 +117,6 @@ public sealed record ReplacementLayoutResult(
   AppliedRowInsertion? Insertion,
   string Message)
 {
+  public RowMutationResult? RowFailure { get; init; }
   public static ReplacementLayoutResult Failed(string message) => new(false, null, null, null, message);
 }

@@ -375,6 +375,7 @@ public sealed class ExcelAutomaticPlacementService
         {
           CompensationSucceeded = reference.CompensationSucceeded,
           CompensationErrors = reference.CompensationSucceeded ? [] : [prepared.Message],
+          RowFailure = prepared,
         };
         var result = PlaceImages(workbook, worksheetName, side,
           [images[0] with { ScaleOverride = pair.Scale }], preferActiveGap, horizontalMarginPoints,
@@ -382,7 +383,7 @@ public sealed class ExcelAutomaticPlacementService
         if (result.Succeeded) return result with { ReferenceResize = reference };
         if (!result.CompensationSucceeded) return result with { ReferenceResize = reference };
         var undone = reference.SetApplied(workbook, false);
-        return result with { CompensationSucceeded = undone.Succeeded,
+        return result with { CompensationSucceeded = undone.Succeeded, RowFailure = undone.Succeeded ? result.RowFailure : undone,
           Message = result.Message + (undone.Succeeded ? "" : " " + undone.Message) };
       }
     }
@@ -412,7 +413,7 @@ public sealed class ExcelAutomaticPlacementService
             appliedInsertion);
           if (!mutation.Succeeded || !mutation.Changed)
           {
-            return Compensate(workbook, initialAnalysis, placed, appliedRows, mutation.Message);
+            return Compensate(workbook, initialAnalysis, placed, appliedRows, mutation.Message, mutation);
           }
 
           appliedRows.Add(new AppliedRowInsertion(mutation.WorksheetName, mutation.StartRow, mutation.Count, insertion.Reason));
@@ -424,7 +425,7 @@ public sealed class ExcelAutomaticPlacementService
             InsertedRowHeightPoints);
           if (!normalized.Succeeded || !normalized.Changed)
           {
-            return Compensate(workbook, initialAnalysis, placed, appliedRows, normalized.Message);
+            return Compensate(workbook, initialAnalysis, placed, appliedRows, normalized.Message, normalized);
           }
           currentCaseEnd = checked(currentCaseEnd + mutation.Count);
         }
@@ -602,8 +603,11 @@ public sealed class ExcelAutomaticPlacementService
     AutomaticPlacementAnalysisResult analysis,
     IReadOnlyList<AutomaticPlacedImage> placed,
     IReadOnlyList<AppliedRowInsertion> insertedRows,
-    string failure)
+    string failure,
+    RowMutationResult? rowFailure = null)
   {
+    if (rowFailure?.MutationMayHaveOccurred == true)
+      return new AutomaticPlacementResult(false, false, analysis, placed, insertedRows, [failure], failure) { RowFailure = rowFailure };
     var errors = new List<string>();
     foreach (var image in placed.Reverse())
     {
@@ -621,6 +625,8 @@ public sealed class ExcelAutomaticPlacementService
         insertion.WorksheetName,
         insertion.StartRow,
         insertion.Count);
+      if (deletion.MutationMayHaveOccurred)
+        return new AutomaticPlacementResult(false, false, analysis, placed, insertedRows, [deletion.Message], failure + " " + deletion.Message) { RowFailure = deletion };
       if (!deletion.Succeeded || !deletion.Changed)
       {
         errors.Add($"Rows {insertion.StartRow}-{insertion.StartRow + insertion.Count - 1}: {deletion.Message}");
@@ -941,6 +947,7 @@ public sealed record AutomaticPlacementResult(
   string Message)
 {
   public PairedImageResize? ReferenceResize { get; init; }
+  public RowMutationResult? RowFailure { get; init; }
   public static AutomaticPlacementResult Failed(
     string message,
     AutomaticPlacementAnalysisResult? analysis = null) =>
