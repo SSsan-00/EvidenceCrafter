@@ -2,6 +2,8 @@
 
 対象計画: [追加高速化計画](implementation-plan-excel-com-performance-2026-10-01.md)。配布版: `0.1.0-preview.32`。
 
+追記: 画像配置失敗への対応は[preview.33の検証記録](review-inserted-image-verification-2026-10-01.md)を参照。下記の追加fixtureの「非表示行」説明は、後述のとおり列非表示の補助処理の誤りがあり、preview.33で訂正した。
+
 作業開始前に現時点のソースを`e199b4d5a84a67a534d85df6393cf407d2a809f2`としてremote mainへpushした。このcommitのproduction codeを比較基準とする。改修ソースは`23de30e621fe684e3e9958b81ff5c0cce66d5d50`。
 
 ## 実装
@@ -20,13 +22,13 @@
 - 単体テスト: 166/166合格。
 - 既存の実Excel 9シナリオ: 合格。4CASEのNEW先行→OLD後追い、実Top差0.05pt以内、混在行高・非表示行、行整理・移動、参照画像の外部編集と履歴、参照xlsxのコピーでの画像追記と双方向移動を含む。
 - 追加の実Excelシナリオ: 合格。旧セル別fingerprintとの完全一致を、均一／混在書式、文字・数値・0・false・空欄・エラー数式・単一セル・開始列Zで確認した。
-- Shapeの完全Snapshotを独立した境界oracleとして、範囲走査と削除禁止行の一致を確認した。境界付近／対象の上と下／両Sideまたぎ／回転／グループ／非表示行／小数行高／名前指定範囲外参照を含む。両Side判定も既存のSnapshot判定と比較した。
+- Shapeの完全Snapshotを独立した境界oracleとして、範囲走査と削除禁止行の一致を確認した。境界付近／対象の上と下／両Sideまたぎ／回転／グループ／小数行高／名前指定範囲外参照を含む。非表示行fixtureについては下記の訂正を参照。両Side判定も既存のSnapshot判定と比較した。
 - backup Add／Copy／SaveAs、削除前依存読取、Delete前、Delete後、fingerprint、削除後依存読取、結果不明、managed例外を故障注入した。削除前は変更せず、削除後は退避と復旧JSONがDispose後も残り、未確認のUndo/Redoが拒否されることを確認した。
 - 退避中にセルが書き込まれる場合と対象Range内へ行が挿入される場合は、アプリによるDeleteを行わず後続markerを保持した。参照画像のInsert／Delete結果不明も伝搬し、補償・再試行を止めた。
 - native backupが1シートであること、Undoで小数行高が戻ること、Undo→Redo後も次CASEとmarkerを含むセル別fingerprintが削除直後と一致することを確認した。
 - production diffの独立した読取専用レビューを実施し、確定した指摘を反映した。
 
-原記録は`artifacts/com-performance-results`に保存した。`integration-final.trx`は既存8件合格・追加fixture1件失敗、修正後の追加シナリオは`row-optimization-verified.trx`で合格。`optimization-backfill-final.trx`の4CASEシナリオも合格。初期の追加fixtureでは共有COM wrapperの完全解放によりExcel終了確認が失敗したため、共有参照の1回解放へ修正した。追加の画像fixtureは非表示行を設定する前に配置し、非表示状態でのShape境界はその後に検証する。失敗記録を消して成功だけを残していない。
+原記録は`artifacts/com-performance-results`に保存した。`integration-final.trx`は既存8件合格・追加fixture1件失敗、修正後の追加シナリオは`row-optimization-verified.trx`で合格。`optimization-backfill-final.trx`の4CASEシナリオも合格。初期の追加fixtureでは共有COM wrapperの完全解放によりExcel終了確認が失敗したため、共有参照の1回解放へ修正した。追加の画像fixtureは非表示を設定する前に配置したが、後の調査で `SetRangeProperty("10:10", "Hidden", true)` が `EntireColumn` を使い、実際には全列を非表示にしていたと判明した。この追加fixtureの合格を「非表示行での配置・Shape境界検証」の証拠とはしない。preview.33で `EntireRow` を使い、10行目のHidden・Heightと画像列の表示を確認してから配置する試験へ修正した。別の4CASE試験の非表示行は当初から `EntireRow` を使っており、この誤りとは区別する。失敗記録を消して成功だけを残していない。
 
 ## 性能比較
 

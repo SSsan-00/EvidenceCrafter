@@ -25,6 +25,10 @@ Officeを起動するテストには `[TestCategory("ExcelIntegration")]` を付
 
 `SameSideBackfill` は4CASEの配置・末尾整理・同じSideの次CASE移動後の実Top、外部編集とRedo、エビデンス列外の削除保護を確認する。`RowMutationOptimizations` は旧fingerprintとのhash同値、Shape境界と両Side判定、故障時の退避保持、退避中の変更検出、行削除Undo→Redoの内容保全を実Excelで検証する。
 
+`InsertedImages_VerifyGeometryAndPreserveFailedRollback` は既存画像とセル内容があるシートで、座標0・下方の小数座標・非表示行・非表示列・geometry不一致・取り消し失敗を確認する。後続CASEのmarkerと先に配置済みの画像・追加行が保持されることも検証する。行を隠すfixtureは `EntireRow` を使用し、実Hidden・Heightと画像列が表示されていることを確認する。
+
+挿入画像のgeometry検証・取り消し未確認などの失敗では、予定／実Left・Top・Width・Height、処理工程、Excel版、Side、セル座標、元サイズ・倍率、行／列の非表示状態を `%LOCALAPPDATA%\EvidenceCrafter\logs\diagnostic.jsonl` に記録する。この失敗診断は通常の診断ログ設定が無効でも記録し、セル内容・画像データ・Workbookのパスは含めない。画像の取り消しを確認できない場合はアプリの変更操作を停止し、復旧用PNGのパスをステータスへ表示する。
+
 `SameSidePerformance` は対象CASE外の0/50/200/500図形で、専用Excelプロセスをサンプルごとに作り、プレビュー・配置・末尾整理・次CASE移動をウォームアップ1回＋計測10回測る。起動・fixture生成・終了を時間から除外する。全体中央値と最大値、工程時間・読取回数をJSONLに記録できる。
 
 ```powershell
