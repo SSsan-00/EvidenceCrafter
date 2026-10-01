@@ -1,6 +1,6 @@
 # EvidenceCrafter
 
-Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.31` では同じSideの次CASEでNEW先行・OLD後追いする際の上端合わせと配置速度を改善しています。[改修検証記録](docs/review-same-side-backfill-2026-10-01.md)。
+Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.32` ではCASE末尾整理のExcel通信を減らし、行変更結果が不明な場合の復旧用退避保持と操作停止を追加しています。[追加改修検証記録](docs/review-excel-com-performance-2026-10-01.md)。NEW先行・OLD後追いの上端合わせは[前回の改修検証記録](docs/review-same-side-backfill-2026-10-01.md)を参照してください。
 
 ## 実装済み
 
