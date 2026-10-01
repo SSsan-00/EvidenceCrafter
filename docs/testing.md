@@ -25,6 +25,10 @@ Officeを起動するテストには `[TestCategory("ExcelIntegration")]` を付
 
 `SameSideBackfill` は4CASEの配置・末尾整理・同じSideの次CASE移動後の実Top、外部編集とRedo、エビデンス列外の削除保護を確認する。`RowMutationOptimizations` は旧fingerprintとのhash同値、Shape境界と両Side判定、故障時の退避保持、退避中の変更検出、行削除Undo→Redoの内容保全を実Excelで検証する。
 
+上記fixtureには印刷範囲を設定し、`RowMutationOptimizations` には後続CASEを参照する名前定義も追加する。名前定義を読む・復元する `Names.Item` はメソッドとして呼ぶ。行削除Undo／Redo後は、Excelから直接読み取った名前定義と退避記録を比較する。
+
+`AutomaticPlacement_AdvancesAfterSafeTailFailureAndPreservesRecoveryGuard` は一時ブックと非表示のMainFormを使い、実際の自動配置ハンドラーをメッセージ処理付きで実行する。印刷範囲付きCASEの正常整理、別シートの数式による行未変更での整理中止、同じSideの次CASE移動、配置履歴・画像・CASE境界の保全、結果不明の行変更が報告された後の操作停止を確認する。設定・ログは専用一時ディレクトリへ保存する。
+
 `InsertedImages_VerifyGeometryAndPreserveFailedRollback` は既存画像とセル内容があるシートで、座標0・下方の小数座標・非表示行・非表示列・geometry不一致・取り消し失敗を確認する。後続CASEのmarkerと先に配置済みの画像・追加行が保持されることも検証する。行を隠すfixtureは `EntireRow` を使用し、実Hidden・Heightと画像列が表示されていることを確認する。
 
 挿入画像のgeometry検証・取り消し未確認などの失敗では、予定／実Left・Top・Width・Height、処理工程、Excel版、Side、セル座標、元サイズ・倍率、行／列の非表示状態を `%LOCALAPPDATA%\EvidenceCrafter\logs\diagnostic.jsonl` に記録する。この失敗診断は通常の診断ログ設定が無効でも記録し、セル内容・画像データ・Workbookのパスは含めない。画像の取り消しを確認できない場合はアプリの変更操作を停止し、復旧用PNGのパスをステータスへ表示する。
