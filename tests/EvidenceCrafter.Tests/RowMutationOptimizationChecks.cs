@@ -129,6 +129,14 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           SetCellValue(target, 3, 1, 1); SetCellValue(target, 3, 2, 1);
           SetCellValue(target, 13, 1, 1); SetCellValue(target, 13, 2, 2);
           SetCellValue(target, 16, 3, "shifted marker");
+          var names = GetRequiredProperty(workbook, "Names");
+          var pageSetup = GetRequiredProperty(target, "PageSetup");
+          try
+          {
+            Release(InvokeMethod(names, "Add", "TailMarker", "='FaultTarget'!$C$16"));
+            SetProperty(pageSetup, "PrintArea", "$A$1:$F$20");
+          }
+          finally { Release(names); Release(pageSetup); }
           SetRangeProperty(target, "A9:F9", "RowHeight", 31.5);
           SetProperty(application, "SheetsInNewWorkbook", 3);
           var service = new ExcelRowMutationService();
@@ -193,11 +201,14 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             }
             finally { _ = InvokeMethod(native, "Close", false); Release(native); ReleaseOnce(workbooks); }
             Assert.IsTrue(service.RestoreDeletedRows(identity, backup).Succeeded);
+            Assert.AreEqual("=FaultTarget!$C$16", backup.PreDeletionNames!["TailMarker"]);
+            CollectionAssert.AreEquivalent(backup.PreDeletionNames.ToArray(), ReadNativeNames(workbook).ToArray());
             var restoredRow = GetRequiredProperty(target, "Rows", 9);
             try { Assert.AreEqual(31.5, Convert.ToDouble(GetRequiredProperty(restoredRow, "RowHeight")), 0.05); }
             finally { Release(restoredRow); }
             var redo = service.DeleteRestoredRows(identity, backup);
             Assert.IsTrue(redo.Succeeded && redo.Changed, redo.Message);
+            CollectionAssert.AreEquivalent(backup.PostDeletionNames!.ToArray(), ReadNativeNames(workbook).ToArray());
             Assert.AreEqual(postDelete, CaptureLegacyFingerprint(target, 3, 18, false), "Redo must preserve the shifted next CASE and marker.");
           }
           else
@@ -228,6 +239,14 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             if (backup.RecoveryRequired) { File.Delete(backup.BackupPath); File.Delete(backup.BackupPath + ".recovery.json"); }
           }
           _ = InvokeMethod(target, "Delete"); Release(target);
+          var remainingNames = GetRequiredProperty(workbook, "Names");
+          try
+          {
+            var markerName = InvokeMethod(remainingNames, "Item", "TailMarker");
+            try { _ = InvokeMethod(markerName!, "Delete"); }
+            finally { Release(markerName); }
+          }
+          finally { Release(remainingNames); }
         }
       }
     }
@@ -237,6 +256,23 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       // Parent/Application are aliases of the supervisor's live wrappers.
       ReleaseOnce(application); Release(sheets); ReleaseOnce(workbook);
     }
+  }
+
+  private static Dictionary<string, string> ReadNativeNames(object workbook)
+  {
+    var names = GetRequiredProperty(workbook, "Names");
+    try
+    {
+      var result = new Dictionary<string, string>();
+      for (var index = 1; index <= Convert.ToInt32(GetRequiredProperty(names, "Count")); index++)
+      {
+        var name = InvokeMethod(names, "Item", index)!;
+        try { result.Add((string)GetRequiredProperty(name, "Name"), (string)GetRequiredProperty(name, "RefersTo")); }
+        finally { Release(name); }
+      }
+      return result;
+    }
+    finally { Release(names); }
   }
   private static bool TryReadFingerprintProperty(object target, string property, out object? value)
   {

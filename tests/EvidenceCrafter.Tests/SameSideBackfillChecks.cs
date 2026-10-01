@@ -11,6 +11,9 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   {
     SetRangeProperty(sheet, "A1:AF202", "RowHeight", 15.75);
     SetRangeProperty(sheet, "A1:AF202", "NumberFormat", "0.00");
+    var pageSetup = GetRequiredProperty(sheet, "PageSetup");
+    try { SetProperty(pageSetup, "PrintArea", "$A$1:$AF$202"); }
+    finally { Release(pageSetup); }
     SetRangeProperty(sheet, "20:21", "RowHeight", 24);
     var hiddenCell = GetRequiredProperty(sheet, "Cells", 30, 1);
     var hiddenRow = GetRequiredProperty(hiddenCell, "EntireRow");

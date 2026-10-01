@@ -1527,7 +1527,7 @@ public sealed class ExcelRowMutationService
         object? name = null;
         try
         {
-          name = InvokeProperty(names, "Item", index);
+          name = InvokeMethod(names, "Item", index);
           var key = Convert.ToString(GetRequiredProperty(name!, "Name"), CultureInfo.InvariantCulture);
           var refersTo = Convert.ToString(GetRequiredProperty(name!, "RefersTo"), CultureInfo.InvariantCulture);
           if (!string.IsNullOrEmpty(key) && refersTo is not null)
@@ -1565,7 +1565,7 @@ public sealed class ExcelRowMutationService
         object? name = null;
         try
         {
-          name = InvokeProperty(names, "Item", pair.Key);
+          name = InvokeMethod(names, "Item", pair.Key);
           if (name is null)
           {
             _ = InvokeMethod(names, "Add", pair.Key, pair.Value);

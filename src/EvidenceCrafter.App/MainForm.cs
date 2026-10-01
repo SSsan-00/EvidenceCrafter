@@ -1643,7 +1643,7 @@ public sealed class MainForm : Form
       using var stream = new MemoryStream();
       imageCopy.Save(stream, ImageFormat.Png);
       RowDeletionSnapshot? cleanupSnapshot = null;
-      var cleanupFailed = false;
+      string? cleanupWarning = null;
       if (result.Analysis?.CompletesCaseAfterPlacement == true)
       {
         SetStatus("New／OldがそろったためCASE末尾を整理しています…");
@@ -1651,7 +1651,8 @@ public sealed class MainForm : Form
           workbook,
           result.PlacedImages[^1].WorksheetName,
           result.PlacedImages[^1].Target.TopLeftCell.Row));
-        cleanupFailed = StopAfterRowFailure(cleanup, "画像は配置済みですが、CASE末尾整理に失敗しました。");
+        if (StopAfterRowFailure(cleanup, "画像は配置済みですが、CASE末尾整理に失敗しました。"))
+          cleanupWarning = cleanup.Message;
         if (rowRecoveryMessage is not null) return;
         cleanupSnapshot = cleanup.Changed ? cleanup.DeletionSnapshot : null;
       }
@@ -1664,7 +1665,6 @@ public sealed class MainForm : Form
         cleanupSnapshot,
         result.Analysis!.LayoutAnalysis!.Layout!,
         result.ReferenceResize);
-      if (cleanupFailed) return;
 
       WriteDiagnostic(
         DiagnosticEventKind.MutationResult,
@@ -1688,6 +1688,8 @@ public sealed class MainForm : Form
         }
         else SetStatus($"画像は配置済みです。{focus.Message}");
       }
+      if (cleanupWarning is not null)
+        SetStatus($"{statusLabel.Text} CASE末尾整理は行未変更のまま中止しました: {cleanupWarning}");
     }
     catch (Exception exception) when (exception is not OutOfMemoryException)
     {
