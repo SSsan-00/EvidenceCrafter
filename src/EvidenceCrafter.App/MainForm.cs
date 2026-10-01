@@ -1626,8 +1626,14 @@ public sealed class MainForm : Form
         requestedCaseLabel));
       SetStatus(result.Message);
       if (result.RowFailure is { } rowFailure) StopAfterRowFailure(rowFailure, "自動配置の行変更に失敗しました。");
+      if (result.ImageFailure is { } imageFailure) RecordImagePlacementFailure(imageFailure, result.Message, imagePath);
       if (!result.Succeeded)
       {
+        if (!result.CompensationSucceeded)
+        {
+          rowRecoveryMessage ??= result.Message + $" 復旧用PNG: {imagePath}";
+          SetStatus(rowRecoveryMessage);
+        }
         return;
       }
 
@@ -1744,6 +1750,7 @@ public sealed class MainForm : Form
         if (CanUpdateUi)
         {
           SetStatus(result.Message);
+          RecordImagePlacementFailure(result, recoveryImagePath: imagePath);
           if (result.Succeeded)
           {
             using var stream = new MemoryStream();
@@ -1769,7 +1776,7 @@ public sealed class MainForm : Form
     {
       try
       {
-        if (File.Exists(imagePath))
+        if (rowRecoveryMessage is null && File.Exists(imagePath))
         {
           File.Delete(imagePath);
         }
@@ -2361,6 +2368,8 @@ public sealed class MainForm : Form
             dimensions,
             horizontalMarginPoints: horizontalMarginPoints));
           SetStatus(result.Message);
+          RecordImagePlacementFailure(result, recoveryImagePath: imagePath);
+          if (rowRecoveryMessage is not null) throw new InvalidOperationException(rowRecoveryMessage);
           if (result.Succeeded)
           {
             target = result.Target!;
@@ -2372,7 +2381,7 @@ public sealed class MainForm : Form
         {
           try
           {
-            File.Delete(imagePath);
+            if (rowRecoveryMessage is null) File.Delete(imagePath);
           }
           catch (IOException)
           {
@@ -2429,6 +2438,8 @@ public sealed class MainForm : Form
           horizontalMarginPoints,
           images[index].Plan.Image.Scale,
           images[index].Plan.VerticalOffsetPoints));
+        RecordImagePlacementFailure(placed, recoveryImagePath: imagePath);
+        if (rowRecoveryMessage is not null) throw new InvalidOperationException(rowRecoveryMessage);
         if (placed.Succeeded)
         {
           targets[index] = placed.Target!;
@@ -2442,7 +2453,7 @@ public sealed class MainForm : Form
       }
       finally
       {
-        try { File.Delete(imagePath); } catch (IOException) { }
+        try { if (rowRecoveryMessage is null) File.Delete(imagePath); } catch (IOException) { }
       }
     }
 
@@ -2606,6 +2617,7 @@ public sealed class MainForm : Form
         var resized = await StaTask.Run(() => referenceResize.SetApplied(workbook, true));
         if (!resized.Succeeded) { StopAfterRowFailure(resized, "参照画像のRedoに失敗しました。"); return false; }
         if (await placementEntry.Redo()) return true;
+        if (rowRecoveryMessage is not null) return false;
         var restored = await StaTask.Run(() => referenceResize.SetApplied(workbook, false));
         if (!restored.Succeeded) StopAfterRowFailure(restored, "参照画像の復元に失敗しました。");
         return false;
@@ -2883,6 +2895,20 @@ public sealed class MainForm : Form
       rowRecoveryMessage = message;
     SetStatus(message);
     return true;
+  }
+
+  private void RecordImagePlacementFailure(ImagePlacementResult result, string? message = null, string? recoveryImagePath = null)
+  {
+    if (result.Succeeded) return;
+    // Placement failures need geometry even when routine diagnostics are disabled.
+    if (result.Diagnostic is { } diagnostic)
+      diagnosticLog.Write(DiagnosticEventKind.MutationResult, DiagnosticOutcome.Failed, placement: diagnostic);
+    if (result.MutationMayHaveOccurred)
+    {
+      rowRecoveryMessage = message ?? result.Message;
+      if (recoveryImagePath is not null) rowRecoveryMessage += $" 復旧用PNG: {recoveryImagePath}";
+      SetStatus(rowRecoveryMessage);
+    }
   }
 
   private void PreserveImageRecovery(string path, WorkbookIdentity workbook, ManagedShapeTarget original)

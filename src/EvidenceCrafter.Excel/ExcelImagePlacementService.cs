@@ -16,6 +16,7 @@ public sealed class ExcelImagePlacementService
   private const int MsoFalse = 0;
   private const int MsoTrue = -1;
   private const int XlMove = 2;
+  [ThreadStatic] internal static Action<string, object>? PlacementStageObserved;
   private readonly IPlacementFocusService focusService;
   private readonly ImageSizingService imageSizingService = new();
 
@@ -464,6 +465,23 @@ public sealed class ExcelImagePlacementService
     var shapeName = $"EST_IMG_{Guid.NewGuid():N}";
     var focusCell = requestedCell;
     var resolvedWorksheetName = worksheetName;
+    var insertionAttempted = false;
+    ImagePlacementGeometry? expected = null;
+    ImagePlacementGeometry? actual = null;
+    double? appliedScale = null;
+    var stage = "BeforeInsert";
+    ImagePlacementResult Fail(string message)
+    {
+      var diagnostic = CapturePlacementDiagnostic(application, targetCell, focusCell, side,
+        imageDimensions, appliedScale, stage, expected, actual);
+      var restored = !insertionAttempted || TryDeleteShape(shape, shapes);
+      return ImagePlacementResult.Failed(restored ? message :
+        message + " 挿入画像の取り消しを確認できません。追加の操作を止め、保存せずExcelの状態を確認してください。") with
+      {
+        MutationMayHaveOccurred = !restored,
+        Diagnostic = diagnostic,
+      };
+    }
     try
     {
       SetProperty(application, "EnableEvents", false);
@@ -486,10 +504,17 @@ public sealed class ExcelImagePlacementService
       var cellLeft = ReadDoubleProperty(targetCell, "Left");
       var cellTop = ReadDoubleProperty(targetCell, "Top");
       var cellWidth = ReadDoubleProperty(targetCell, "Width");
+      if (cellWidth <= 0)
+        return Fail("配置セルの列が非表示、または幅が0のため配置できません。配置先の列を確認してください。");
       var availableWidth = availableWidthPoints ?? Math.Max(cellWidth * 5.0 - (horizontalMarginPoints * 2), 24.0);
       var fittedImage = scaleOverride is { } scale
         ? imageSizingService.AtScale(imageDimensions, availableWidth, scale)
         : imageSizingService.FitToWidth(imageDimensions, availableWidth);
+      expected = new(cellLeft + horizontalMarginPoints, cellTop + verticalOffsetPoints,
+        fittedImage.WidthPoints, fittedImage.HeightPoints);
+      appliedScale = fittedImage.Scale;
+      if (!expected.IsValid)
+        return Fail("画像の予定位置またはサイズが不正なため配置できません。");
 
       // Revalidate the session and the live Workbook state immediately before
       // mutating Excel.  The selected identity is only a snapshot; the
@@ -506,6 +531,9 @@ public sealed class ExcelImagePlacementService
       }
 
       shapes = GetRequiredProperty(worksheet, "Shapes");
+      stage = "AddPicture";
+      PlacementStageObserved?.Invoke("BeforeInsert", shapes);
+      insertionAttempted = true;
       shape = InvokeMethod(
         shapes,
         "AddPicture",
@@ -518,8 +546,11 @@ public sealed class ExcelImagePlacementService
         fittedImage.HeightPoints);
       if (shape is null)
       {
-        return ImagePlacementResult.Failed("Excel did not return the inserted image Shape.");
+        return Fail("Excelから挿入画像を取得できませんでした。");
       }
+
+      PlacementStageObserved?.Invoke("AfterInsert", shape);
+      stage = "Attributes";
 
       SetProperty(shape, "Name", shapeName);
       var metadata = new ManagedShapeMetadata(1, side, focusCell.Value)
@@ -531,16 +562,18 @@ public sealed class ExcelImagePlacementService
       SetProperty(shape, "AlternativeText", alternativeText);
       SetProperty(shape, "LockAspectRatio", MsoTrue);
       SetProperty(shape, "Placement", XlMove);
+      PlacementStageObserved?.Invoke("AfterAttributes", shape);
 
+      stage = "ReadShape";
       var insertedName = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.InvariantCulture);
-      if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal) ||
-        Math.Abs(ReadDoubleProperty(shape, "Top") - (cellTop + verticalOffsetPoints)) > 0.05 ||
-        Math.Abs(ReadDoubleProperty(shape, "Width") - fittedImage.WidthPoints) > 0.05 ||
-        Math.Abs(ReadDoubleProperty(shape, "Height") - fittedImage.HeightPoints) > 0.05)
-      {
-        TryDeleteShape(shape);
-        return ImagePlacementResult.Failed("The inserted image Shape could not be verified.");
-      }
+      actual = new(ReadDoubleProperty(shape, "Left"), ReadDoubleProperty(shape, "Top"),
+        ReadDoubleProperty(shape, "Width"), ReadDoubleProperty(shape, "Height"));
+      stage = "VerifyName";
+      if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal))
+        return Fail("挿入画像の管理名を確認できませんでした。");
+      stage = "VerifyGeometry";
+      var mismatch = VerifyGeometry(expected, actual);
+      if (mismatch is not null) return Fail(mismatch);
 
       SetProperty(application, "EnableEvents", eventsWereEnabled);
       var focus = focusService.FocusPlacedImage(identity, resolvedWorksheetName, focusCell.Value);
@@ -556,18 +589,17 @@ public sealed class ExcelImagePlacementService
           alternativeText,
           metadata,
           focusCell.Value,
-          ReadDoubleProperty(shape, "Left"),
-          ReadDoubleProperty(shape, "Top"),
-          ReadDoubleProperty(shape, "Width"),
-          ReadDoubleProperty(shape, "Height")),
+          actual.Left,
+          actual.Top,
+          actual.Width,
+          actual.Height),
         focus.Succeeded
           ? $"画像を{resolvedWorksheetName}!R{focusCell.Value.Row}C{focusCell.Value.Column}へ配置しました。"
           : $"画像を配置しましたが、対象セルの選択に失敗しました: {focus.Message}");
     }
-    catch (Exception exception) when (IsAutomationFailure(exception))
+    catch (Exception exception) when (exception is not OutOfMemoryException)
     {
-      TryDeleteShape(shape);
-      return ImagePlacementResult.Failed($"Excelへの画像配置に失敗しました (0x{GetAutomationHResult(exception):X8}).");
+      return Fail($"Excelへの画像配置に失敗しました（工程: {stage}、0x{GetAutomationHResult(exception):X8}）。");
     }
     finally
     {
@@ -712,21 +744,69 @@ public sealed class ExcelImagePlacementService
     }
   }
 
-  private static void TryDeleteShape(object? shape)
+  private static bool TryDeleteShape(object? shape, object? shapes)
   {
-    if (shape is null)
-    {
-      return;
-    }
+    if (shape is null || shapes is null) return false;
 
     try
     {
+      var count = Convert.ToInt32(GetRequiredProperty(shapes, "Count"), CultureInfo.InvariantCulture);
+      PlacementStageObserved?.Invoke("BeforeRollback", shape);
       _ = InvokeMethod(shape, "Delete");
+      PlacementStageObserved?.Invoke("AfterRollback", shape);
+      return Convert.ToInt32(GetRequiredProperty(shapes, "Count"), CultureInfo.InvariantCulture) == count - 1;
     }
-    catch (Exception exception) when (IsAutomationFailure(exception))
+    catch (Exception exception) when (exception is not OutOfMemoryException)
     {
-      // Best-effort compensation must not hide the placement failure.
+      return false;
     }
+  }
+
+  // AddPicture uses single-precision positions. Compare to its nearest representable
+  // coordinate as well; keep size, paired-image and external-edit checks strict.
+  internal static bool PositionMatches(double expected, double actual) =>
+    float.IsFinite((float)expected) && double.IsFinite(actual) && expected >= 0 && actual >= 0 &&
+    (Math.Abs(actual - expected) <= 0.05 ||
+      Math.Abs(actual - (double)(float)expected) <= 0.05);
+
+  internal static string? VerifyGeometry(ImagePlacementGeometry expected, ImagePlacementGeometry actual)
+  {
+    foreach (var (property, planned, measured, position) in new[]
+    {
+      ("Left", expected.Left, actual.Left, true), ("Top", expected.Top, actual.Top, true),
+      ("Width", expected.Width, actual.Width, false), ("Height", expected.Height, actual.Height, false),
+    })
+    {
+      var valid = position ? PositionMatches(planned, measured) :
+        double.IsFinite(planned) && double.IsFinite(measured) && planned > 0 && measured > 0 && Math.Abs(planned - measured) <= 0.05;
+      if (!valid)
+        return FormattableString.Invariant($"挿入画像の{(position ? "位置" : "サイズ")}を確認できませんでした（{property}: 予定 {planned:R}pt、実際 {measured:R}pt、差 {measured - planned:R}pt）。");
+    }
+    return null;
+  }
+
+  private static ImagePlacementDiagnostic CapturePlacementDiagnostic(object application, object? cell,
+    CellReference? reference, EvidenceSide side, ImageDimensions source, double? scale, string stage,
+    ImagePlacementGeometry? expected, ImagePlacementGeometry? actual)
+  {
+    string? version = null, build = null;
+    bool? rowHidden = null, columnHidden = null;
+    object? row = null, column = null;
+    try
+    {
+      if (TryGetProperty(application, "Version", out var value)) version = Convert.ToString(value, CultureInfo.InvariantCulture);
+      if (TryGetProperty(application, "Build", out value)) build = Convert.ToString(value, CultureInfo.InvariantCulture);
+      if (cell is not null)
+      {
+        row = GetRequiredProperty(cell, "EntireRow");
+        column = GetRequiredProperty(cell, "EntireColumn");
+        if (TryGetProperty(row, "Hidden", out value) && value is bool hiddenRow) rowHidden = hiddenRow;
+        if (TryGetProperty(column, "Hidden", out value) && value is bool hiddenColumn) columnHidden = hiddenColumn;
+      }
+    }
+    catch (Exception exception) when (exception is not OutOfMemoryException) { }
+    finally { ComRelease.Release(row); ComRelease.Release(column); }
+    return new(stage, version, build, reference, side, source, scale, expected, actual, rowHidden, columnHidden);
   }
 
   private static object GetRequiredProperty(object target, string propertyName, params object[] arguments) =>
@@ -777,7 +857,7 @@ public sealed class ExcelImagePlacementService
   private static double ReadDoubleProperty(object target, string propertyName)
   {
     var value = Convert.ToDouble(GetRequiredProperty(target, propertyName), CultureInfo.InvariantCulture);
-    return double.IsFinite(value) && value > 0 ? value : 64.0;
+    return value;
   }
 
   private static bool IsAutomationFailure(Exception exception) =>
@@ -824,9 +904,21 @@ public sealed record ImagePlacementResult(
   ManagedShapeTarget? Target,
   string Message)
 {
+  public bool MutationMayHaveOccurred { get; init; }
+  public ImagePlacementDiagnostic? Diagnostic { get; init; }
   public static ImagePlacementResult Failed(string message) =>
     new(false, false, string.Empty, string.Empty, default, null, message);
 }
+
+public sealed record ImagePlacementGeometry(double Left, double Top, double Width, double Height)
+{
+  internal bool IsValid => float.IsFinite((float)Left) && Left >= 0 && float.IsFinite((float)Top) && Top >= 0 &&
+    float.IsFinite((float)Width) && Width > 0 && float.IsFinite((float)Height) && Height > 0;
+}
+
+public sealed record ImagePlacementDiagnostic(string Stage, string? ExcelVersion, string? ExcelBuild,
+  CellReference? Cell, EvidenceSide Side, ImageDimensions SourceDimensions, double? Scale,
+  ImagePlacementGeometry? Expected, ImagePlacementGeometry? Actual, bool? RowHidden, bool? ColumnHidden);
 
 public sealed record ImageDeletionResult(bool Succeeded, string WorksheetName, string Message)
 {

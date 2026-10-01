@@ -83,20 +83,20 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   private static void SetRangeProperty(object worksheet, string address, string property, object value)
   {
     object? range = null;
-    object? columns = null;
+    object? entireRange = null;
     try
     {
       range = GetRequiredProperty(worksheet, "Range", address);
       if (property == "Hidden")
       {
-        columns = GetRequiredProperty(range, "EntireColumn");
-        SetProperty(columns, property, value);
+        entireRange = GetRequiredProperty(range, char.IsDigit(address[0]) ? "EntireRow" : "EntireColumn");
+        SetProperty(entireRange, property, value);
       }
       else
       {
         SetProperty(range, property, value);
       }
     }
-    finally { Release(columns); Release(range); }
+    finally { Release(entireRange); Release(range); }
   }
 }

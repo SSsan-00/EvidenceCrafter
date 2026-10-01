@@ -456,7 +456,11 @@ public sealed class ExcelAutomaticPlacementService
         verifiedStep.Plan.VerticalOffsetPoints);
       if (!placement.Succeeded)
       {
-        return Compensate(workbook, initialAnalysis, placed, appliedRows, placement.Message);
+        if (placement.MutationMayHaveOccurred)
+          return new AutomaticPlacementResult(false, false, initialAnalysis, placed, appliedRows,
+            [placement.Message], placement.Message) { ImageFailure = placement };
+        return Compensate(workbook, initialAnalysis, placed, appliedRows, placement.Message)
+          with { ImageFailure = placement };
       }
 
       placed.Add(new AutomaticPlacedImage(
@@ -615,6 +619,8 @@ public sealed class ExcelAutomaticPlacementService
       if (!deletion.Succeeded)
       {
         errors.Add($"Shape {image.ShapeName}: {deletion.Message}");
+        return new AutomaticPlacementResult(false, false, analysis, placed, insertedRows, errors,
+          $"自動配置の画像を復旧できません。追加の行操作を止め、Excelの状態を確認してください。{failure} {deletion.Message}");
       }
     }
 
@@ -948,6 +954,7 @@ public sealed record AutomaticPlacementResult(
 {
   public PairedImageResize? ReferenceResize { get; init; }
   public RowMutationResult? RowFailure { get; init; }
+  public ImagePlacementResult? ImageFailure { get; init; }
   public static AutomaticPlacementResult Failed(
     string message,
     AutomaticPlacementAnalysisResult? analysis = null) =>

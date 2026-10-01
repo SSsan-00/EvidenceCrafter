@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EvidenceCrafter.Excel;
 
 namespace EvidenceCrafter.App;
 
@@ -29,6 +30,7 @@ internal sealed class DiagnosticLog
   private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
   {
     Converters = { new JsonStringEnumConverter() },
+    NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
   };
   private readonly string logDirectory;
   private readonly Lock sync = new();
@@ -48,7 +50,8 @@ internal sealed class DiagnosticLog
     int? itemCount = null,
     TimeSpan? duration = null,
     Exception? exception = null,
-    uint? clipboardSequence = null)
+    uint? clipboardSequence = null,
+    ImagePlacementDiagnostic? placement = null)
   {
     var entry = new DiagnosticEntry(
       DateTimeOffset.UtcNow,
@@ -59,7 +62,8 @@ internal sealed class DiagnosticLog
       duration is null ? null : checked((long)duration.Value.TotalMilliseconds),
       exception?.GetType().FullName,
       exception?.HResult,
-      clipboardSequence);
+      clipboardSequence,
+      placement);
 
     try
     {
@@ -111,5 +115,6 @@ internal sealed class DiagnosticLog
     long? DurationMilliseconds,
     string? ExceptionType,
     int? ExceptionHResult,
-    uint? ClipboardSequence);
+    uint? ClipboardSequence,
+    ImagePlacementDiagnostic? Placement);
 }

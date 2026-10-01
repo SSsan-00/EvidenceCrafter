@@ -80,12 +80,22 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         try { Release(InvokeMethod(groupRange, "Group")); }
         finally { Release(groupRange); }
         SetRangeProperty(sheet, "9:9", "RowHeight", 15.75);
+        SetRangeProperty(sheet, "10:10", "Hidden", true);
+        var hiddenCell = GetRequiredProperty(sheet, "Cells", 10, 4);
+        var hiddenRow = GetRequiredProperty(hiddenCell, "EntireRow");
+        var imageColumn = GetRequiredProperty(hiddenCell, "EntireColumn");
+        try
+        {
+          Assert.IsTrue(Convert.ToBoolean(GetRequiredProperty(hiddenRow, "Hidden"), CultureInfo.InvariantCulture));
+          Assert.AreEqual(0d, Convert.ToDouble(GetRequiredProperty(hiddenCell, "Height"), CultureInfo.InvariantCulture));
+          Assert.IsFalse(Convert.ToBoolean(GetRequiredProperty(imageColumn, "Hidden"), CultureInfo.InvariantCulture));
+        }
+        finally { Release(hiddenRow); Release(imageColumn); Release(hiddenCell); }
         foreach (var (side, cell) in new[] { (EvidenceSide.New, new CellReference(4, 4)), (EvidenceSide.Old, new CellReference(6, 19)) })
         {
           var image = new ExcelImagePlacementService().PlaceImage(identity, "OtherTarget", cell, side, imagePath, new ImageDimensions(120, 80), availableWidthPoints: 120);
           Assert.IsTrue(image.Succeeded, image.Message);
         }
-        SetRangeProperty(sheet, "10:10", "Hidden", true);
         var full = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget");
         var scoped = new ExcelSheetSnapshotService().Capture(identity, "OtherTarget", scopeCaseLabel: "1-1", scopeShapes: true);
         Assert.IsTrue(full.Succeeded, full.Message); Assert.IsTrue(scoped.Succeeded, scoped.Message);
