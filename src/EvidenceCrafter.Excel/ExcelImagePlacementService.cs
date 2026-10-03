@@ -13,6 +13,7 @@ namespace EvidenceCrafter.Excel;
 /// </summary>
 public sealed class ExcelImagePlacementService
 {
+  internal const double AdditionalPositionRoundingLimitPoints = 0.25;
   private const int MsoFalse = 0;
   private const int MsoTrue = -1;
   private const int XlMove = 2;
@@ -764,10 +765,16 @@ public sealed class ExcelImagePlacementService
 
   // AddPicture uses single-precision positions. Compare to its nearest representable
   // coordinate as well; keep size, paired-image and external-edit checks strict.
-  internal static bool PositionMatches(double expected, double actual) =>
-    float.IsFinite((float)expected) && double.IsFinite(actual) && expected >= 0 && actual >= 0 &&
-    (Math.Abs(actual - expected) <= 0.05 ||
-      Math.Abs(actual - (double)(float)expected) <= 0.05);
+  internal static bool PositionMatches(double expected, double actual)
+  {
+    var rounded = (float)expected;
+    if (!float.IsFinite(rounded) || !double.IsFinite(actual) || expected < 0 || actual < 0) return false;
+    if (Math.Abs(actual - expected) <= 0.05 || Math.Abs(actual - (double)rounded) <= 0.05) return true;
+    // Excel may return an adjacent Single after converting the supplied position.
+    // ponytail: only measured adjacent steps up to 0.25pt; extend after native verification.
+    return Math.Abs(actual - (double)rounded) <= AdditionalPositionRoundingLimitPoints &&
+      (actual == (double)float.BitDecrement(rounded) || actual == (double)float.BitIncrement(rounded));
+  }
 
   internal static string? VerifyGeometry(ImagePlacementGeometry expected, ImagePlacementGeometry actual)
   {
@@ -918,7 +925,14 @@ public sealed record ImagePlacementGeometry(double Left, double Top, double Widt
 
 public sealed record ImagePlacementDiagnostic(string Stage, string? ExcelVersion, string? ExcelBuild,
   CellReference? Cell, EvidenceSide Side, ImageDimensions SourceDimensions, double? Scale,
-  ImagePlacementGeometry? Expected, ImagePlacementGeometry? Actual, bool? RowHidden, bool? ColumnHidden);
+  ImagePlacementGeometry? Expected, ImagePlacementGeometry? Actual, bool? RowHidden, bool? ColumnHidden)
+{
+  public double? ExpectedLeftSingle => Expected is null ? null : (double)(float)Expected.Left;
+  public double? ExpectedTopSingle => Expected is null ? null : (double)(float)Expected.Top;
+  public double AdditionalPositionRoundingLimitPoints => ExcelImagePlacementService.AdditionalPositionRoundingLimitPoints;
+  public bool? TopMatchesAllowedPosition => Expected is null || Actual is null ? null :
+    ExcelImagePlacementService.PositionMatches(Expected.Top, Actual.Top);
+}
 
 public sealed record ImageDeletionResult(bool Succeeded, string WorksheetName, string Message)
 {

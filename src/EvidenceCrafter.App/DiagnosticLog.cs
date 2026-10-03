@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using EvidenceCrafter.Excel;
@@ -63,7 +64,8 @@ internal sealed class DiagnosticLog
       exception?.GetType().FullName,
       exception?.HResult,
       clipboardSequence,
-      placement);
+      placement,
+      typeof(DiagnosticLog).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
 
     try
     {
@@ -116,5 +118,6 @@ internal sealed class DiagnosticLog
     string? ExceptionType,
     int? ExceptionHResult,
     uint? ClipboardSequence,
-    ImagePlacementDiagnostic? Placement);
+    ImagePlacementDiagnostic? Placement,
+    string? AppVersion);
 }

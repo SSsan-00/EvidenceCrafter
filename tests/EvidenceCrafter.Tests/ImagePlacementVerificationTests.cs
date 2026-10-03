@@ -21,12 +21,21 @@ public sealed class ImagePlacementVerificationTests
   }
 
   [TestMethod]
-  public void PositionComparison_AcceptsNearestExcelCoordinateButRejectsAnotherPosition()
+  public void PositionComparison_AcceptsBoundedAdjacentSinglesAndRejectsLargerMoves()
   {
     const double planned = 1874212.56;
     Assert.IsTrue(ExcelImagePlacementService.PositionMatches(planned, 1874212.5));
-    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(planned, 1874212.375));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(planned, 1874212.375));
+    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(planned, 1874212.25));
     Assert.IsFalse(ExcelImagePlacementService.PositionMatches(77, 77.1));
+    foreach (var (expected, actual) in new[] { (937481.55, 937481.625), (937483.25, 937483.3125),
+      (1874981.55, 1874981.625), (1874983.25, 1874983.125), (1874984.31, 1874984.375), (3749984.31, 3749984d) })
+      Assert.IsTrue(ExcelImagePlacementService.PositionMatches(expected, actual));
+    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(9374981, 9374982));
+    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(3749984.31, 3749983.75));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(524288, 524288.0625));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(4194304, 4194303.75));
+    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(4194304, 4194304.5));
   }
 
   [TestMethod]
@@ -53,6 +62,10 @@ public sealed class ImagePlacementVerificationTests
       Assert.AreEqual(0d, entry.RootElement.GetProperty("placement").GetProperty("actual").GetProperty("width").GetDouble());
       Assert.AreEqual(19, entry.RootElement.GetProperty("placement").GetProperty("cell").GetProperty("column").GetInt32());
       Assert.IsFalse(entry.RootElement.TryGetProperty("workbookPath", out _));
+      Assert.AreEqual(77d, entry.RootElement.GetProperty("placement").GetProperty("expectedTopSingle").GetDouble());
+      Assert.AreEqual(0.25, entry.RootElement.GetProperty("placement").GetProperty("additionalPositionRoundingLimitPoints").GetDouble());
+      Assert.IsTrue(entry.RootElement.GetProperty("placement").GetProperty("topMatchesAllowedPosition").GetBoolean());
+      Assert.IsFalse(string.IsNullOrWhiteSpace(entry.RootElement.GetProperty("appVersion").GetString()));
     }
     finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
   }
@@ -91,7 +104,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           {
             var actual = Convert.ToDouble(GetRequiredProperty(raw, "Top"), CultureInfo.InvariantCulture);
             Assert.AreEqual(placed.Target!.TopPoints, actual);
-            Assert.AreEqual((double)(float)top, actual, 0.05);
+            Assert.IsTrue(ExcelImagePlacementService.PositionMatches(top, actual));
             Assert.AreEqual(left, placed.Target.LeftPoints, 0.05);
             Assert.AreEqual(120d, placed.Target.WidthPoints, 0.05);
             Assert.AreEqual(80d, placed.Target.HeightPoints, 0.05);
@@ -104,6 +117,33 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           imagePath, new(120, 80), 120, horizontalMarginPoints: 0, verticalOffsetPoints: offset);
         Assert.IsTrue(redone.Succeeded, redone.Message);
         Assert.AreEqual(placed.Target!.TopPoints, redone.Target!.TopPoints);
+        Assert.IsTrue(service.DeletePlacedImage(identity, "OtherTarget", redone.ShapeName).Succeeded);
+      }
+
+      var leftPlacement = service.PlaceImage(identity, "OtherTarget", new(6, 16000), EvidenceSide.New,
+        imagePath, new(120, 80), 120, horizontalMarginPoints: 0.3);
+      Assert.IsTrue(leftPlacement.Succeeded, leftPlacement.Message);
+      var leftRaw = InvokeMethod(shapes, "Item", leftPlacement.ShapeName)!;
+      try { Assert.AreEqual(leftPlacement.Target!.LeftPoints, Convert.ToDouble(GetRequiredProperty(leftRaw, "Left"), CultureInfo.InvariantCulture)); }
+      finally { Release(leftRaw); }
+      Assert.IsTrue(service.DeletePlacedImage(identity, "OtherTarget", leftPlacement.ShapeName).Succeeded);
+
+      SetRangeProperty(sheet, "A1:AF202", "RowHeight", 18.75);
+      SetRangeProperty(sheet, "10:10", "Hidden", false);
+      foreach (var (row, offset, nativeTop) in new[] { (50000, 0.3, 937481.625), (50000, 2d, 937483.3125),
+        (100000, 0.3, 1874981.625), (100000, 2d, 1874983.125), (100000, 3.06, 1874984.375), (200000, 3.06, 3749984d) })
+      {
+        var placed = service.PlaceImage(identity, "OtherTarget", new(row, 4), EvidenceSide.New,
+          imagePath, new(120, 80), 120, verticalOffsetPoints: offset);
+        Assert.IsTrue(placed.Succeeded, placed.Message);
+        var raw = InvokeMethod(shapes, "Item", placed.ShapeName)!;
+        try { Assert.AreEqual(nativeTop, Convert.ToDouble(GetRequiredProperty(raw, "Top"), CultureInfo.InvariantCulture)); }
+        finally { Release(raw); }
+        Assert.IsTrue(service.DeletePlacedImage(identity, "OtherTarget", placed.ShapeName).Succeeded);
+        var redone = service.PlaceImage(identity, "OtherTarget", new(row, 4), EvidenceSide.New,
+          imagePath, new(120, 80), 120, verticalOffsetPoints: offset);
+        Assert.IsTrue(redone.Succeeded, redone.Message);
+        Assert.AreEqual(nativeTop, redone.Target!.TopPoints);
         Assert.IsTrue(service.DeletePlacedImage(identity, "OtherTarget", redone.ShapeName).Succeeded);
       }
 

@@ -11,13 +11,16 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
 {
   private static void VerifyAutomaticPlacementAdvance(object sheet, WorkbookIdentity identity, string imagePath)
   {
-    SetRangeProperty(sheet, "A1:AF153", "RowHeight", 15.75);
-    SetRangeProperty(sheet, "A1:AF153", "NumberFormat", "0.00");
-    SetCellValue(sheet, 2, 3, "NEW"); SetCellValue(sheet, 2, 18, "OLD");
+    SetRangeProperty(sheet, "A1:AF2548", "NumberFormat", "0.00");
+    SetRangeProperty(sheet, "A1:AF2499", "RowHeight", 375);
+    SetRangeProperty(sheet, "A2500:AF2500", "RowHeight", 178.5);
+    SetRangeProperty(sheet, "A2501:AF2501", "RowHeight", 177.75);
+    SetRangeProperty(sheet, "A2502:AF2548", "RowHeight", 18.75);
+    SetCellValue(sheet, 2499, 3, "NEW"); SetCellValue(sheet, 2499, 18, "OLD");
     for (var index = 0; index < 3; index++)
     {
-      SetCellValue(sheet, 3 + index * 50, 1, 1);
-      SetCellValue(sheet, 3 + index * 50, 2, index + 1);
+      SetCellValue(sheet, 2500 + index * 16, 1, 1);
+      SetCellValue(sheet, 2500 + index * 16, 2, index + 1);
     }
     var workbook = GetRequiredProperty(sheet, "Parent");
     var sheets = GetRequiredProperty(workbook, "Worksheets");
@@ -32,7 +35,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     void SetField(string name, object value) => formType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(form, value);
     try
     {
-      SetProperty(pageSetup, "PrintArea", "$A$1:$AF$153");
+      SetProperty(pageSetup, "PrintArea", "$A$2500:$AF$2548");
       SetField("settingsStore", new AppSettingsStore(Path.Combine(directory, "settings.json")));
       SetField("diagnosticLog", new DiagnosticLog(directory));
       SetField("settings", new EvidenceCrafterSettings
@@ -47,11 +50,23 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       var automatic = new ExcelAutomaticPlacementService();
       var place = formType.GetMethod("PlaceClipboardImageAutomaticallyAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
       var snapshots = new ExcelSheetSnapshotService();
+      void Complete(Task task, string stage = "placement")
+      {
+        Console.WriteLine($"UI {stage} started");
+        var clock = Stopwatch.StartNew();
+        while (!task.IsCompleted && clock.Elapsed < TimeSpan.FromSeconds(65))
+        {
+          Application.DoEvents(); Thread.Sleep(10);
+        }
+        Assert.IsTrue(task.IsCompleted, $"UI {stage} did not finish: {((Label)Field("statusLabel")).Text}");
+        task.GetAwaiter().GetResult();
+      }
       foreach (var label in new[] { "1-1", "1-2" })
       {
         var first = automatic.PlaceImages(identity, "OtherTarget", EvidenceSide.New,
           [new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 80))], requestedCaseLabel: label);
         Assert.IsTrue(first.Succeeded, first.Message);
+        if (label == "1-1") Assert.AreEqual(937483.3125, first.PlacedImages[0].Target.TopPoints);
         if (label == "1-2")
         {
           var formula = GetRequiredProperty(dependencySheet, "Cells", 1, 1);
@@ -61,13 +76,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         var before = snapshots.Capture(identity, "OtherTarget").Snapshot!;
         var task = (Task)place.Invoke(form, [identity, "OtherTarget", EvidenceSide.Old,
           image, label, null, null, false])!;
-        var clock = Stopwatch.StartNew();
-        while (!task.IsCompleted && clock.Elapsed < TimeSpan.FromSeconds(65))
-        {
-          Application.DoEvents(); Thread.Sleep(10);
-        }
-        Assert.IsTrue(task.IsCompleted, "Automatic placement did not finish.");
-        task.GetAwaiter().GetResult();
+        Complete(task);
         Assert.AreEqual(label == "1-1" ? "1-2" : "1-3", ((ComboBox)Field("caseLabelBox")).Text,
           ((Label)Field("statusLabel")).Text);
         Assert.IsTrue(((RadioButton)Field("oldSideButton")).Checked);
@@ -75,6 +84,18 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.IsNull(formType.GetField("rowRecoveryMessage", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form));
         var after = snapshots.Capture(identity, "OtherTarget").Snapshot!;
         Assert.HasCount(before.Shapes.Count + 1, after.Shapes);
+        var reference = after.Shapes.Single(shape => shape.Name == first.PlacedImages[0].ShapeName);
+        var added = after.Shapes.Single(shape => before.Shapes.All(old => old.Name != shape.Name));
+        Assert.AreEqual(reference.TopPoints, added.TopPoints, 0.05);
+        if (label == "1-1")
+        {
+          Complete((Task)formType.GetMethod("UndoAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!, "Undo");
+          Assert.HasCount(before.Shapes.Count, snapshots.Capture(identity, "OtherTarget").Snapshot!.Shapes);
+          Complete((Task)formType.GetMethod("RedoAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!, "Redo");
+          var restored = snapshots.Capture(identity, "OtherTarget").Snapshot!;
+          Assert.HasCount(after.Shapes.Count, restored.Shapes);
+          Assert.AreEqual(reference.TopPoints, restored.Shapes.Single(shape => shape.Name != reference.Name).TopPoints, 0.05);
+        }
         if (label == "1-2")
         {
           Assert.IsTrue(((Label)Field("statusLabel")).Text.Contains("行未変更", StringComparison.Ordinal));
