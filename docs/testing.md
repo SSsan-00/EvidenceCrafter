@@ -29,9 +29,15 @@ Officeを起動するテストには `[TestCategory("ExcelIntegration")]` を付
 
 `AutomaticPlacement_AdvancesAfterSafeTailFailureAndPreservesRecoveryGuard` は一時ブックと非表示のMainFormを使い、実際の自動配置ハンドラーをメッセージ処理付きで実行する。印刷範囲付きCASEの正常整理、別シートの数式による行未変更での整理中止、同じSideの次CASE移動、配置履歴・画像・CASE境界の保全、結果不明の行変更が報告された後の操作停止を確認する。設定・ログは専用一時ディレクトリへ保存する。
 
+このfixtureでは先行行を高くして、通常の安全確認セル数の範囲内で予定Top=937483.25ptを作る。OLD後追い・末尾整理後・実際の画面Undo／Redo後の横並びと次CASE移動を確認する。
+
 `InsertedImages_VerifyGeometryAndPreserveFailedRollback` は既存画像とセル内容があるシートで、座標0・下方の小数座標・非表示行・非表示列・geometry不一致・取り消し失敗を確認する。後続CASEのmarkerと先に配置済みの画像・追加行が保持されることも検証する。行を隠すfixtureは `EntireRow` を使用し、実Hidden・Heightと画像列が表示されていることを確認する。
 
+Topの丸め回帰は50,000／100,000／200,000行の6条件で、直接読んだExcel実Topが調査時の実値と一致することを検証する。遠方列のLeft、削除・再配置、Single刻み幅の境界、隣接値を越えるずれ・追加許容上限超過の拒否も確認する。
+
 挿入画像のgeometry検証・取り消し未確認などの失敗では、予定／実Left・Top・Width・Height、処理工程、Excel版、Side、セル座標、元サイズ・倍率、行／列の非表示状態を `%LOCALAPPDATA%\EvidenceCrafter\logs\diagnostic.jsonl` に記録する。この失敗診断は通常の診断ログ設定が無効でも記録し、セル内容・画像データ・Workbookのパスは含めない。画像の取り消しを確認できない場合はアプリの変更操作を停止し、復旧用PNGのパスをステータスへ表示する。
+
+preview.35からは最寄りSingleのLeft／Top、隣接Singleの追加許容上限、Top位置検証の結果、アプリInformationalVersionも記録する。既存の予定値差0.05pt／最寄りSingle差0.05ptに加えて、最寄り値から0.25pt以内の直前／直後Singleと実値が完全一致する場合だけ追加で許可する。画像同士の実Top差、サイズ検証、外部編集判定は従来の0.05ptを維持する。
 
 `SameSidePerformance` は対象CASE外の0/50/200/500図形で、専用Excelプロセスをサンプルごとに作り、プレビュー・配置・末尾整理・次CASE移動をウォームアップ1回＋計測10回測る。起動・fixture生成・終了を時間から除外する。全体中央値と最大値、工程時間・読取回数をJSONLに記録できる。
 

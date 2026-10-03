@@ -1,6 +1,6 @@
 # EvidenceCrafter
 
-Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.34` では印刷範囲・名前定義があるブックのCASE末尾整理で発生する `0x80020003` を修正しました。行未変更で整理を中止した場合も、配置履歴を保持して設定に従い次CASE／Sideへ進みます。[今回の検証記録](docs/review-case-tail-navigation-2026-10-01.md)。画像挿入時の検証は[画像配置の検証記録](docs/review-inserted-image-verification-2026-10-01.md)、CASE末尾整理の高速化は[追加改修検証記録](docs/review-excel-com-performance-2026-10-01.md)、NEW先行・OLD後追いの上端合わせは[横並び改修検証記録](docs/review-same-side-backfill-2026-10-01.md)を参照してください。
+Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.35` ではExcelが返す隣接Single座標の丸めを限定的に許容し、正常な画像がTop検証で取り消される問題を修正しました。大きなTopでのOLD後追い・横並び・Undo／Redo・次CASE移動を確認しています。[今回の検証記録](docs/review-top-verification-2026-10-02.md)。印刷範囲付きブックの末尾整理は[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、画像挿入時の保護は[画像配置の検証記録](docs/review-inserted-image-verification-2026-10-01.md)、高速化は[追加改修検証記録](docs/review-excel-com-performance-2026-10-01.md)、上端合わせは[横並び改修検証記録](docs/review-same-side-backfill-2026-10-01.md)を参照してください。
 
 ## 実装済み
 
