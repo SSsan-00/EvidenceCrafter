@@ -39,24 +39,31 @@ public sealed class ImagePlacementVerificationTests
   }
 
   [TestMethod]
-  public void GeometryVerification_KeepsSizesStrictAndReportsRawZero()
+  public void GeometryVerification_AcceptsOnePointSizesButRejectsInvalidValuesAndPositionDrift()
   {
     var planned = new ImagePlacementGeometry(0, 0, 120, 80);
     Assert.IsNull(ExcelImagePlacementService.VerifyGeometry(planned, planned));
+    foreach (var actual in new[] { planned with { Width = 119 }, planned with { Width = 121 },
+      planned with { Height = 79 }, planned with { Height = 81 }, planned with { Width = 120.06 } })
+      Assert.IsNull(ExcelImagePlacementService.VerifyGeometry(planned, actual));
     foreach (var actual in new[] { planned with { Width = 0 }, planned with { Height = 0 },
-      planned with { Width = 120.06 }, planned with { Height = double.NaN } })
+      planned with { Width = 118.999 }, planned with { Width = 121.001 },
+      planned with { Height = 78.999 }, planned with { Height = 81.001 },
+      planned with { Height = double.NaN }, planned with { Width = double.PositiveInfinity },
+      planned with { Width = -1 }, planned with { Left = 0.1 }, planned with { Top = 0.1 } })
       Assert.IsNotNull(ExcelImagePlacementService.VerifyGeometry(planned, actual));
     StringAssert.Contains(ExcelImagePlacementService.VerifyGeometry(planned, planned with { Width = 0 })!, "実際 0pt");
   }
 
   [TestMethod]
-  public void InsertedSizeCorrection_BoundsCorrectionWithoutAcceptingIncorrectGeometry()
+  public void InsertedSizeCorrection_KeepsCorrectionBoundSeparateFromAcceptanceTolerance()
   {
     var expected = new ImagePlacementGeometry(0, 0, 745.5, 745.5);
     foreach (var actual in new[] { expected with { Width = 745.2000122070312 },
       expected with { Height = 745.2000122070312 }, expected with { Width = 745, Height = 746 } })
     {
-      Assert.IsNotNull(ExcelImagePlacementService.VerifyGeometry(expected, actual));
+      Assert.IsNotNull(ExcelImagePlacementService.VerifyGeometry(expected, actual, sizeTolerancePoints: 0.05));
+      Assert.IsNull(ExcelImagePlacementService.VerifyGeometry(expected, actual));
       Assert.IsTrue(ExcelImagePlacementService.CanCorrectInsertedSize(expected, actual));
     }
     foreach (var actual in new[] { expected with { Width = 744.999 }, expected with { Height = 746.001 },
@@ -87,6 +94,7 @@ public sealed class ImagePlacementVerificationTests
       Assert.IsFalse(string.IsNullOrWhiteSpace(entry.RootElement.GetProperty("appVersion").GetString()));
       Assert.IsTrue(entry.RootElement.GetProperty("placement").GetProperty("sizeCorrectionAttempted").GetBoolean());
       Assert.AreEqual(119.7, entry.RootElement.GetProperty("placement").GetProperty("beforeSizeCorrection").GetProperty("width").GetDouble());
+      Assert.AreEqual(1d, entry.RootElement.GetProperty("placement").GetProperty("insertedImageSizeTolerancePoints").GetDouble());
     }
     finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
   }

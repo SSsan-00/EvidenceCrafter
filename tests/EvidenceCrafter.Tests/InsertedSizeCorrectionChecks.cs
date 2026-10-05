@@ -63,7 +63,71 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         }
       }
 
-      // A failed correction never becomes a tolerance-based success or another retry.
+      // Persisting size drift is accepted through 1pt, with final Excel geometry retained.
+      using (var bitmap = new Bitmap(994, 994)) bitmap.Save(path, ImageFormat.Png);
+      foreach (var property in new[] { "Width", "Height" })
+      foreach (var (delta, accepted) in new[] { (-1d, true), (1d, true), (-1.25, false), (1.25, false), (-0.3, true) })
+      {
+        var corrections = 0;
+        void ApplyDrift(object shape)
+        {
+          SetProperty(shape, "LockAspectRatio", 0);
+          SetProperty(shape, property, 745.5 + delta);
+          SetProperty(shape, "LockAspectRatio", -1);
+        }
+        ExcelImagePlacementService.PlacementStageObserved = (stage, shape) =>
+        {
+          if (stage == "AfterAttributes") ApplyDrift(shape);
+          if (stage == "AfterSizeCorrection") { corrections++; ApplyDrift(shape); }
+        };
+        var result = service.PlaceImage(identity, "OtherTarget", new(6, 4), EvidenceSide.New,
+          path, new(745.5, 745.5), 750);
+        Assert.AreEqual(accepted, result.Succeeded, result.Message);
+        Assert.AreEqual(delta == -0.3 ? 1 : 0, corrections);
+        if (accepted)
+        {
+          var raw = InvokeMethod(shapes, "Item", result.ShapeName)!;
+          try
+          {
+            Assert.AreEqual(745.5 + delta, Read(raw, property), 0.001);
+            Assert.AreEqual(Read(raw, "Width"), result.Target!.WidthPoints);
+            Assert.AreEqual(Read(raw, "Height"), result.Target.HeightPoints);
+          }
+          finally { Release(raw); }
+          var managedImage = new ExcelManagedShapeService();
+          if (delta == -0.3)
+          {
+            var edited = InvokeMethod(shapes, "Item", result.ShapeName)!;
+            try
+            {
+              SetProperty(edited, "LockAspectRatio", 0);
+              SetProperty(edited, "Width", result.Target!.WidthPoints + 0.3);
+              Assert.IsFalse(managedImage.Delete(identity, result.Target).Succeeded,
+                "A tolerated insertion must not relax external-edit detection during Undo.");
+              SetProperty(edited, "Width", result.Target.WidthPoints);
+              SetProperty(edited, "LockAspectRatio", -1);
+            }
+            finally { Release(edited); }
+          }
+          Assert.IsTrue(managedImage.Delete(identity, result.Target!).Succeeded);
+        }
+        else Assert.IsFalse(result.MutationMayHaveOccurred);
+        Assert.AreEqual(1, Count());
+      }
+
+      // An otherwise permitted width change must not exceed the available side width.
+      ExcelImagePlacementService.PlacementStageObserved = (stage, shape) =>
+      {
+        if (stage == "AfterAttributes")
+        { SetProperty(shape, "LockAspectRatio", 0); SetProperty(shape, "Width", 746.5); }
+      };
+      var overflow = service.PlaceImage(identity, "OtherTarget", new(6, 4), EvidenceSide.New,
+        path, new(745.5, 745.5), 745.5);
+      Assert.IsFalse(overflow.Succeeded);
+      StringAssert.Contains(overflow.Message, "配置可能幅");
+      Assert.AreEqual(1, Count());
+
+      // Greater drift and correction exceptions still fail without another retry.
       using (var bitmap = new Bitmap(994, 500)) bitmap.Save(path, ImageFormat.Png);
       foreach (var fault in new[] { "PersistentDrift", "CorrectionThrows", "Name", "Position", "Rollback" })
       {
@@ -77,7 +141,8 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
             if (fault == "CorrectionThrows") throw new InvalidOperationException("Injected correction failure");
             if (fault == "Name") SetProperty(shape, "Name", "WrongName");
             else if (fault == "Position") SetProperty(shape, "Left", Read(shape, "Left") + 10);
-            else SetDrift(shape, "Width");
+            else
+            { SetProperty(shape, "LockAspectRatio", 0); SetProperty(shape, "Width", 744.25); }
           }
           if (stage == "BeforeRollback" && fault == "Rollback") throw new InvalidOperationException("Injected deletion failure");
         };
@@ -89,7 +154,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.AreEqual(reportedActual, failed.Diagnostic.BeforeSizeCorrection!.Width);
         Assert.AreEqual(fault == "Rollback", failed.MutationMayHaveOccurred);
         Assert.AreEqual(fault == "Rollback" ? 2 : 1, Count());
-        if (fault == "PersistentDrift") Assert.AreEqual(reportedActual, failed.Diagnostic.Actual!.Width);
+        if (fault == "PersistentDrift") Assert.AreEqual(744.25, failed.Diagnostic.Actual!.Width);
         if (fault == "CorrectionThrows") Assert.IsNull(failed.Diagnostic.Actual, "No stale geometry after a partially applied correction.");
         if (fault == "Rollback")
         {
@@ -120,7 +185,13 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       {
         if (stage == "AfterAttributes")
         { SetProperty(shape, "LockAspectRatio", 0); SetProperty(shape, "Height", Read(shape, "Height") - 0.3); }
-        if (stage == "AfterSizeCorrection") automaticCorrections++;
+        if (stage == "AfterSizeCorrection")
+        {
+          automaticCorrections++;
+          SetProperty(shape, "LockAspectRatio", 0);
+          SetProperty(shape, "Height", Read(shape, "Height") - 0.3);
+          SetProperty(shape, "LockAspectRatio", -1);
+        }
       };
       var first = automatic.PlaceImages(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "1-1");
       Assert.IsTrue(first.Succeeded, first.Message);
@@ -131,7 +202,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       var old = pair.PlacedImages[0];
       Assert.AreEqual(before.TopPoints, old.Target.TopPoints, 0.05);
       Assert.AreEqual(old.Plan.Image.WidthPoints, old.Target.WidthPoints, 0.05);
-      Assert.AreEqual(old.Plan.Image.HeightPoints, old.Target.HeightPoints, 0.05);
+      Assert.AreEqual(old.Plan.Image.HeightPoints, old.Target.HeightPoints, 1);
       var managed = new ExcelManagedShapeService();
       Assert.IsTrue(managed.Delete(identity, old.Target).Succeeded);
       Assert.IsTrue(pair.ReferenceResize!.SetApplied(identity, false).Succeeded);
@@ -147,7 +218,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       Assert.IsTrue(managed.Delete(identity, redone.Target).Succeeded);
       Assert.IsTrue(managed.Delete(identity, managed.Inspect(identity, "OtherTarget", before.ShapeName).Shape!).Succeeded);
 
-      // Persistent drift in the second image compensates the first image and added rows.
+      // Drift above 1pt in the second image compensates the first image and added rows.
       var snapshots = new ExcelSheetSnapshotService();
       var previous = snapshots.Capture(identity, "OtherTarget").Snapshot!;
       var inserted = 0;
@@ -160,7 +231,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           SetProperty(shape, "Height", Read(shape, "Height") - 0.3);
         }
         if (stage == "AfterSizeCorrection" && inserted == 2)
-        { SetProperty(shape, "LockAspectRatio", 0); SetProperty(shape, "Height", Read(shape, "Height") - 0.3); }
+        { SetProperty(shape, "LockAspectRatio", 0); SetProperty(shape, "Height", Read(shape, "Height") - 1.25); }
       };
       var compensated = automatic.PlaceImages(identity, "OtherTarget", EvidenceSide.New,
         [images[0], images[0]], requestedCaseLabel: "1-1");

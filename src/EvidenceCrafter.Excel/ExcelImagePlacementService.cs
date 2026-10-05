@@ -14,8 +14,8 @@ namespace EvidenceCrafter.Excel;
 public sealed class ExcelImagePlacementService
 {
   internal const double AdditionalPositionRoundingLimitPoints = 0.25;
-  // ponytail: one correction within 0.5pt covers the reported 0.30pt drift;
-  // larger drifts remain failures until their native cause is verified.
+  internal const double InsertedImageSizeTolerancePoints = 1.0;
+  // ponytail: correct small drifts once before the 1pt acceptance check; no retry loop.
   internal const double MaximumInsertedSizeCorrectionPoints = 0.5;
   private const int MsoFalse = 0;
   private const int MsoTrue = -1;
@@ -580,7 +580,7 @@ public sealed class ExcelImagePlacementService
       if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal))
         return Fail("挿入画像の管理名を確認できませんでした。");
       stage = "VerifyGeometry";
-      var mismatch = VerifyGeometry(expected, actual);
+      var mismatch = VerifyGeometry(expected, actual, sizeTolerancePoints: 0.05);
       if (mismatch is not null && CanCorrectInsertedSize(expected, actual))
       {
         beforeSizeCorrection = actual;
@@ -598,9 +598,12 @@ public sealed class ExcelImagePlacementService
         if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal))
           return Fail("挿入画像の管理名を確認できませんでした。");
         stage = "VerifyCorrectedGeometry";
-        mismatch = VerifyGeometry(expected, actual);
+        mismatch = VerifyGeometry(expected, actual, sizeTolerancePoints: 0.05);
       }
-      if (mismatch is not null) return Fail(mismatch);
+      if (mismatch is not null && VerifyGeometry(expected, actual) is { } failure)
+        return Fail(failure);
+      if (actual.Width > availableWidth + 0.05)
+        return Fail("挿入画像の幅が配置可能幅を超えているため配置できません。");
 
       SetProperty(application, "EnableEvents", eventsWereEnabled);
       var focus = focusService.FocusPlacedImage(identity, resolvedWorksheetName, focusCell.Value);
@@ -790,7 +793,7 @@ public sealed class ExcelImagePlacementService
   }
 
   // AddPicture uses single-precision positions. Compare to its nearest representable
-  // coordinate as well; keep size, paired-image and external-edit checks strict.
+  // coordinate as well; paired-image and external-edit checks remain separate.
   internal static bool PositionMatches(double expected, double actual)
   {
     var rounded = (float)expected;
@@ -802,7 +805,8 @@ public sealed class ExcelImagePlacementService
       (actual == (double)float.BitDecrement(rounded) || actual == (double)float.BitIncrement(rounded));
   }
 
-  internal static string? VerifyGeometry(ImagePlacementGeometry expected, ImagePlacementGeometry actual)
+  internal static string? VerifyGeometry(ImagePlacementGeometry expected, ImagePlacementGeometry actual,
+    double sizeTolerancePoints = InsertedImageSizeTolerancePoints)
   {
     foreach (var (property, planned, measured, position) in new[]
     {
@@ -811,7 +815,7 @@ public sealed class ExcelImagePlacementService
     })
     {
       var valid = position ? PositionMatches(planned, measured) :
-        double.IsFinite(planned) && double.IsFinite(measured) && planned > 0 && measured > 0 && Math.Abs(planned - measured) <= 0.05;
+        double.IsFinite(planned) && double.IsFinite(measured) && planned > 0 && measured > 0 && Math.Abs(planned - measured) <= sizeTolerancePoints;
       if (!valid)
         return FormattableString.Invariant($"{(position ? "挿入画像の位置を確認できませんでした" : "挿入画像のサイズが予定値と一致しませんでした")}（{property}: 予定 {planned:R}pt、実際 {measured:R}pt、差 {measured - planned:R}pt）。");
     }
@@ -961,6 +965,7 @@ public sealed record ImagePlacementDiagnostic(string Stage, string? ExcelVersion
 {
   public ImagePlacementGeometry? BeforeSizeCorrection { get; init; }
   public bool SizeCorrectionAttempted => BeforeSizeCorrection is not null;
+  public double InsertedImageSizeTolerancePoints => ExcelImagePlacementService.InsertedImageSizeTolerancePoints;
   public double? ExpectedLeftSingle => Expected is null ? null : (double)(float)Expected.Left;
   public double? ExpectedTopSingle => Expected is null ? null : (double)(float)Expected.Top;
   public double AdditionalPositionRoundingLimitPoints => ExcelImagePlacementService.AdditionalPositionRoundingLimitPoints;

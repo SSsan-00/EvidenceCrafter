@@ -41,6 +41,8 @@ preview.35からは最寄りSingleのLeft／Top、隣接Singleの追加許容上
 
 preview.36の `InsertedImages_CorrectReportedSizeDriftOnceAndVerifyFinalGeometry` は、新規画像に報告値745.2000122070312ptを注入し、幅・高さ、原寸・縮小、挿入直後・属性設定後、低い・大きい座標で予定745.5ptへ戻せることを独立COM読取で確認する。各辺の差0.5pt以内で位置が妥当な新規画像だけを一度補正し、補正後もサイズの許容差0.05ptを維持する。通常成功時は補正しない。補正の例外・再度のずれ・位置／名前の変更・削除失敗、自動配置・後追い・Redo、複数画像の途中失敗による画像・行の補償も確認する。失敗診断には補正前の実geometryと `sizeCorrectionAttempted` を追加する。自然発生の調査結果と制限は[検証記録](review-size-verification-2026-10-05.md)を参照。
 
+preview.37では新規画像の最終サイズ許容差を各辺1ptへ変更した。0.5pt以内の差は従来どおり一度補正し、それでも1pt以内の差が残る場合はExcel実geometryで成功とする。既存の実Excel試験へ幅／高さの±1ptの成功、±1.25ptの拒否、補正後の約−0.30pt差の成功、配置可能幅の超過拒否を追加した。受入後の実サイズを使うUndoと、0.30ptの外部サイズ編集の拒否も確認する。自動配置・後追い・Redoは補正後にも差を残した状態で確認し、複数画像の補償試験は1ptを超える差で失敗させる。診断に `insertedImageSizeTolerancePoints` を記録する。位置・参照画像の検証を含む詳細は[1pt許容の検証記録](review-size-tolerance-1pt-2026-10-05.md)を参照。
+
 `SameSidePerformance` は対象CASE外の0/50/200/500図形で、専用Excelプロセスをサンプルごとに作り、プレビュー・配置・末尾整理・次CASE移動をウォームアップ1回＋計測10回測る。起動・fixture生成・終了を時間から除外する。全体中央値と最大値、工程時間・読取回数をJSONLに記録できる。
 
 ```powershell
