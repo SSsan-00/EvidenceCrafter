@@ -22,3 +22,15 @@ Releaseビルドは警告0・エラー0。非Excelテスト171件が成功した
 - 名前変更、大きな座標・サイズずれ、取り消し失敗、複数画像の途中失敗による画像・行の補償、既存画像・セル内容・CASEアンカーの保全を確認。
 
 専用Excelプロセスと一時ブックで試験し、報告元ブックは操作していない。
+
+## 発行
+
+改修ソース: `0fb859656a4091cdf3fbf50c10585a971d3abbdf`。
+`bootstrap.ps1 -Publish -Runtime win-x64` が成功。最終ビルドも警告0・エラー0、非Excelテスト171／171成功。単一EXEとSHA-256 sidecarの一致を確認した。
+
+- EXE: `artifacts/publish/win-x64/EvidenceCrafter.exe`
+- ProductVersion: `0.1.0-preview.38+0fb859656a4091cdf3fbf50c10585a971d3abbdf`
+- SHA-256: `A56EF2DB402FCC211F1601CB38638235D351746D9A6FF4AFBB4FFEDB2DAFCE41`
+- 発行ログ: `artifacts/rounded-placement-1pt/publish.log`
+
+前版EXEは `artifacts/rounded-placement-1pt/EvidenceCrafter-preview37.exe` に退避済み（SHA-256: `5A02C63D46134B677C63B4B229B1F05E966E6549BF563C9BFC834E8D916C43F8`）。ソースと検証記録をremote mainへ反映し、EXEと生記録は既存方針どおりignored artifact。
