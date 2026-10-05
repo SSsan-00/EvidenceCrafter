@@ -39,6 +39,8 @@ Topの丸め回帰は50,000／100,000／200,000行の6条件で、直接読ん�
 
 preview.35からは最寄りSingleのLeft／Top、隣接Singleの追加許容上限、Top位置検証の結果、アプリInformationalVersionも記録する。既存の予定値差0.05pt／最寄りSingle差0.05ptに加えて、最寄り値から0.25pt以内の直前／直後Singleと実値が完全一致する場合だけ追加で許可する。画像同士の実Top差、サイズ検証、外部編集判定は従来の0.05ptを維持する。
 
+preview.36の `InsertedImages_CorrectReportedSizeDriftOnceAndVerifyFinalGeometry` は、新規画像に報告値745.2000122070312ptを注入し、幅・高さ、原寸・縮小、挿入直後・属性設定後、低い・大きい座標で予定745.5ptへ戻せることを独立COM読取で確認する。各辺の差0.5pt以内で位置が妥当な新規画像だけを一度補正し、補正後もサイズの許容差0.05ptを維持する。通常成功時は補正しない。補正の例外・再度のずれ・位置／名前の変更・削除失敗、自動配置・後追い・Redo、複数画像の途中失敗による画像・行の補償も確認する。失敗診断には補正前の実geometryと `sizeCorrectionAttempted` を追加する。自然発生の調査結果と制限は[検証記録](review-size-verification-2026-10-05.md)を参照。
+
 `SameSidePerformance` は対象CASE外の0/50/200/500図形で、専用Excelプロセスをサンプルごとに作り、プレビュー・配置・末尾整理・次CASE移動をウォームアップ1回＋計測10回測る。起動・fixture生成・終了を時間から除外する。全体中央値と最大値、工程時間・読取回数をJSONLに記録できる。
 
 ```powershell

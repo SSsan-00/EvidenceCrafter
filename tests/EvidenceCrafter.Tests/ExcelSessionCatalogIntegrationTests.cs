@@ -63,10 +63,14 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     RunSupervisedScenario(Scenario.ImageVerification);
 
   [TestMethod]
+  public void InsertedImages_CorrectReportedSizeDriftOnceAndVerifyFinalGeometry() =>
+    RunSupervisedScenario(Scenario.SizeCorrection);
+
+  [TestMethod]
   public void AutomaticPlacement_AdvancesAfterSafeTailFailureAndPreservesRecoveryGuard() =>
     RunSupervisedScenario(Scenario.PlacementAdvance);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, ImageVerification, PlacementAdvance }
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, ImageVerification, SizeCorrection, PlacementAdvance }
 
   private static void RunSupervisedScenario(Scenario scenario, Action<object, WorkbookIdentity, string>? performanceSample = null)
   {
@@ -101,7 +105,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       thread.SetApartmentState(ApartmentState.STA);
       thread.Start();
       if (!completed.Task.Wait(TimeSpan.FromSeconds(scenario == Scenario.SameSidePerformance ? 900 :
-        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.RowMutationOptimization or Scenario.ImageVerification or Scenario.PlacementAdvance ? 180 : 55)))
+        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.RowMutationOptimization or Scenario.ImageVerification or Scenario.SizeCorrection or Scenario.PlacementAdvance ? 180 : 55)))
       {
         supervisor.SuppressComCleanup();
         var terminated = supervisor.TryTerminate(out var terminationFailure);
@@ -225,6 +229,12 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
           string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
         VerifyInsertedImageGeometry(otherWorksheet, identity, placementImagePath);
+      }
+      else if (scenario == Scenario.SizeCorrection)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifyInsertedSizeCorrection(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.PlacementAdvance)
       {

@@ -50,13 +50,32 @@ public sealed class ImagePlacementVerificationTests
   }
 
   [TestMethod]
+  public void InsertedSizeCorrection_BoundsCorrectionWithoutAcceptingIncorrectGeometry()
+  {
+    var expected = new ImagePlacementGeometry(0, 0, 745.5, 745.5);
+    foreach (var actual in new[] { expected with { Width = 745.2000122070312 },
+      expected with { Height = 745.2000122070312 }, expected with { Width = 745, Height = 746 } })
+    {
+      Assert.IsNotNull(ExcelImagePlacementService.VerifyGeometry(expected, actual));
+      Assert.IsTrue(ExcelImagePlacementService.CanCorrectInsertedSize(expected, actual));
+    }
+    foreach (var actual in new[] { expected with { Width = 744.999 }, expected with { Height = 746.001 },
+      expected with { Width = 0 }, expected with { Height = -1 }, expected with { Width = double.NaN },
+      expected with { Height = double.PositiveInfinity }, expected with { Left = 0.1 },
+      expected with { Top = 0.1 } })
+      Assert.IsFalse(ExcelImagePlacementService.CanCorrectInsertedSize(expected, actual));
+    Assert.IsFalse(ExcelImagePlacementService.CanCorrectInsertedSize(expected with { Width = double.NaN }, expected));
+  }
+
+  [TestMethod]
   public void FailureDiagnostic_RecordsGeometryWithoutWorkbookOrImageContents()
   {
     var folder = Path.Combine(Path.GetTempPath(), "EvidenceCrafter.Tests", Guid.NewGuid().ToString("N"));
     try
     {
       var diagnostic = new ImagePlacementDiagnostic("Verify", "16.0", "19127", new CellReference(6, 19),
-        EvidenceSide.Old, new ImageDimensions(120, 80), 1, new(978, 77, 120, 80), new(978, 77, 0, 80), false, true);
+        EvidenceSide.Old, new ImageDimensions(120, 80), 1, new(978, 77, 120, 80), new(978, 77, 0, 80), false, true)
+      { BeforeSizeCorrection = new(978, 77, 119.7, 80) };
       new DiagnosticLog(folder).Write(DiagnosticEventKind.MutationResult, DiagnosticOutcome.Failed, placement: diagnostic);
       using var entry = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "diagnostic.jsonl")));
       Assert.AreEqual(0d, entry.RootElement.GetProperty("placement").GetProperty("actual").GetProperty("width").GetDouble());
@@ -66,6 +85,8 @@ public sealed class ImagePlacementVerificationTests
       Assert.AreEqual(0.25, entry.RootElement.GetProperty("placement").GetProperty("additionalPositionRoundingLimitPoints").GetDouble());
       Assert.IsTrue(entry.RootElement.GetProperty("placement").GetProperty("topMatchesAllowedPosition").GetBoolean());
       Assert.IsFalse(string.IsNullOrWhiteSpace(entry.RootElement.GetProperty("appVersion").GetString()));
+      Assert.IsTrue(entry.RootElement.GetProperty("placement").GetProperty("sizeCorrectionAttempted").GetBoolean());
+      Assert.AreEqual(119.7, entry.RootElement.GetProperty("placement").GetProperty("beforeSizeCorrection").GetProperty("width").GetDouble());
     }
     finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
   }
