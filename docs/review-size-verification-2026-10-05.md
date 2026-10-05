@@ -1,6 +1,6 @@
 # 挿入画像サイズ差への限定補正と検証
 
-対象: [修正計画](implementation-plan-size-verification-2026-10-05.md)。2026-10-05実装。アプリ版preview.36。
+対象: [修正計画](implementation-plan-size-verification-2026-10-05.md)。2026-10-05実装・検証・発行完了。アプリ版preview.36。改修ソース: `74ac3514056b898f4f6b285ee4005c9fd40b0525`。
 
 ## 報告と調査結果
 
@@ -54,6 +54,13 @@
 
 ## 発行
 
-配布版preview.36の単一EXEとSHA-256 sidecarを `bootstrap.ps1 -Publish -Runtime win-x64` で生成する。発行結果は生成後に追記する。
+`bootstrap.ps1 -Publish -Runtime win-x64` が成功した。最終のReleaseビルドも警告0・エラー0、非Excelテスト171／171合格、スキップ0。出力ファイルが単一EXEとSHA-256 sidecarの2点だけであることを確認した。
+
+- EXE: `artifacts/publish/win-x64/EvidenceCrafter.exe`
+- ProductVersion: `0.1.0-preview.36+74ac3514056b898f4f6b285ee4005c9fd40b0525`
+- SHA-256: `A3C707ECE430DA6C993183E30F8AF17FC3655F17AF1C824B46866593A5CF969C`（sidecar一致）
+- 発行ログ: `artifacts/size-verification-fix/publish.log`
+
+ソース・計画・検証記録をremote mainへ反映する。EXEと生記録は既存方針どおりignored artifact。
 
 旧preview.35は `artifacts/size-verification-fix/EvidenceCrafter-preview35.exe` に保持した。SHA-256は `49EB861D4AEAE8843D1FD6F5FA63DBD707A1B5F1AB4F0C79631FE32B32D53647`。
