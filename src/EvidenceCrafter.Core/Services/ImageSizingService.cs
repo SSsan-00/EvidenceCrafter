@@ -7,7 +7,7 @@ public sealed class ImageSizingService
   public FittedImage AtScale(ImageDimensions image, double width, double scale)
   {
     _ = FitToWidth(image, width);
-    if (!double.IsFinite(scale) || scale <= 0 || image.WidthPoints * scale > width + 0.01)
+    if (!double.IsFinite(scale) || scale <= 0 || PlacementGeometryComparison.Exceeds(image.WidthPoints * scale, width))
       throw new ArgumentOutOfRangeException(nameof(scale), "The selected scale exceeds the available width.");
     return new(image.WidthPoints * scale, image.HeightPoints * scale, scale);
   }

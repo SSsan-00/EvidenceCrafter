@@ -63,7 +63,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     RunSupervisedScenario(Scenario.ImageVerification);
 
   [TestMethod]
-  public void InsertedImages_CorrectReportedSizeDriftOnceAndVerifyFinalGeometry() =>
+  public void InsertedImages_AllowRoundedGeometryAndPreserveFailureRecovery() =>
     RunSupervisedScenario(Scenario.SizeCorrection);
 
   [TestMethod]
@@ -234,7 +234,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       {
         var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
           string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
-        VerifyInsertedSizeCorrection(otherWorksheet, identity, placementImagePath);
+        VerifyRoundedPlacementGeometry(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.PlacementAdvance)
       {

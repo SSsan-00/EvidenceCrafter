@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using EvidenceCrafter.App;
 using EvidenceCrafter.Core.Models;
+using EvidenceCrafter.Core.Services;
 using EvidenceCrafter.Excel;
 
 namespace EvidenceCrafter.Tests;
@@ -21,57 +22,59 @@ public sealed class ImagePlacementVerificationTests
   }
 
   [TestMethod]
-  public void PositionComparison_AcceptsBoundedAdjacentSinglesAndRejectsLargerMoves()
+  public void PositionComparison_RoundsToTenthsAndAllowsOnePoint()
   {
     const double planned = 1874212.56;
     Assert.IsTrue(ExcelImagePlacementService.PositionMatches(planned, 1874212.5));
     Assert.IsTrue(ExcelImagePlacementService.PositionMatches(planned, 1874212.375));
-    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(planned, 1874212.25));
-    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(77, 77.1));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(planned, 1874212.25));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(77, 77.1));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(77.04, 78.049));
+    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(77.04, 78.051));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(77.11, 78.11));
     foreach (var (expected, actual) in new[] { (937481.55, 937481.625), (937483.25, 937483.3125),
       (1874981.55, 1874981.625), (1874983.25, 1874983.125), (1874984.31, 1874984.375), (3749984.31, 3749984d) })
       Assert.IsTrue(ExcelImagePlacementService.PositionMatches(expected, actual));
-    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(9374981, 9374982));
-    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(3749984.31, 3749983.75));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(9374981, 9374982));
+    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(9374981, 9374982.1));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(3749984.31, 3749983.75));
     Assert.IsTrue(ExcelImagePlacementService.PositionMatches(524288, 524288.0625));
     Assert.IsTrue(ExcelImagePlacementService.PositionMatches(4194304, 4194303.75));
-    Assert.IsFalse(ExcelImagePlacementService.PositionMatches(4194304, 4194304.5));
+    Assert.IsTrue(ExcelImagePlacementService.PositionMatches(4194304, 4194304.5));
   }
 
   [TestMethod]
-  public void GeometryVerification_AcceptsOnePointSizesButRejectsInvalidValuesAndPositionDrift()
+  public void GeometryVerification_AcceptsRoundedOnePointGeometryAndRejectsInvalidValues()
   {
     var planned = new ImagePlacementGeometry(0, 0, 120, 80);
     Assert.IsNull(ExcelImagePlacementService.VerifyGeometry(planned, planned));
     foreach (var actual in new[] { planned with { Width = 119 }, planned with { Width = 121 },
-      planned with { Height = 79 }, planned with { Height = 81 }, planned with { Width = 120.06 } })
+      planned with { Height = 79 }, planned with { Height = 81 }, planned with { Width = 121.049 },
+      planned with { Left = 1.049 }, planned with { Top = 1 } })
       Assert.IsNull(ExcelImagePlacementService.VerifyGeometry(planned, actual));
     foreach (var actual in new[] { planned with { Width = 0 }, planned with { Height = 0 },
-      planned with { Width = 118.999 }, planned with { Width = 121.001 },
-      planned with { Height = 78.999 }, planned with { Height = 81.001 },
+      planned with { Width = 118.949 }, planned with { Width = 121.051 },
+      planned with { Height = 78.949 }, planned with { Height = 81.051 },
       planned with { Height = double.NaN }, planned with { Width = double.PositiveInfinity },
-      planned with { Width = -1 }, planned with { Left = 0.1 }, planned with { Top = 0.1 } })
+      planned with { Width = -1 }, planned with { Left = 1.051 }, planned with { Top = 1.1 } })
       Assert.IsNotNull(ExcelImagePlacementService.VerifyGeometry(planned, actual));
     StringAssert.Contains(ExcelImagePlacementService.VerifyGeometry(planned, planned with { Width = 0 })!, "実際 0pt");
   }
 
   [TestMethod]
-  public void InsertedSizeCorrection_KeepsCorrectionBoundSeparateFromAcceptanceTolerance()
+  public void GeometryComparison_UsesTheSameRoundingForMatchesAndWidthLimits()
   {
-    var expected = new ImagePlacementGeometry(0, 0, 745.5, 745.5);
-    foreach (var actual in new[] { expected with { Width = 745.2000122070312 },
-      expected with { Height = 745.2000122070312 }, expected with { Width = 745, Height = 746 } })
+    foreach (var (expected, actual) in new[] { (745.5, 745.2000122070312), (745.5, 746.549),
+      (745.5, 744.451), (77.11, 78.11) })
     {
-      Assert.IsNotNull(ExcelImagePlacementService.VerifyGeometry(expected, actual, sizeTolerancePoints: 0.05));
-      Assert.IsNull(ExcelImagePlacementService.VerifyGeometry(expected, actual));
-      Assert.IsTrue(ExcelImagePlacementService.CanCorrectInsertedSize(expected, actual));
+      Assert.IsTrue(PlacementGeometryComparison.Matches(expected, actual));
+      Assert.IsFalse(PlacementGeometryComparison.Exceeds(actual, expected));
     }
-    foreach (var actual in new[] { expected with { Width = 744.999 }, expected with { Height = 746.001 },
-      expected with { Width = 0 }, expected with { Height = -1 }, expected with { Width = double.NaN },
-      expected with { Height = double.PositiveInfinity }, expected with { Left = 0.1 },
-      expected with { Top = 0.1 } })
-      Assert.IsFalse(ExcelImagePlacementService.CanCorrectInsertedSize(expected, actual));
-    Assert.IsFalse(ExcelImagePlacementService.CanCorrectInsertedSize(expected with { Width = double.NaN }, expected));
+    Assert.IsTrue(PlacementGeometryComparison.Exceeds(746.551, 745.5));
+    Assert.IsFalse(PlacementGeometryComparison.Matches(745.5, 746.551));
+    Assert.IsTrue(PlacementGeometryComparison.Exceeds(double.NaN, 100));
+    Assert.IsFalse(PlacementGeometryComparison.Matches(100, double.PositiveInfinity));
+    Assert.AreEqual(77.1, PlacementGeometryComparison.Round(77.05));
   }
 
   [TestMethod]
@@ -81,20 +84,19 @@ public sealed class ImagePlacementVerificationTests
     try
     {
       var diagnostic = new ImagePlacementDiagnostic("Verify", "16.0", "19127", new CellReference(6, 19),
-        EvidenceSide.Old, new ImageDimensions(120, 80), 1, new(978, 77, 120, 80), new(978, 77, 0, 80), false, true)
-      { BeforeSizeCorrection = new(978, 77, 119.7, 80) };
+        EvidenceSide.Old, new ImageDimensions(120, 80), 1, new(978.04, 77.04, 120, 80), new(979.049, 78.049, 0, 80), false, true);
       new DiagnosticLog(folder).Write(DiagnosticEventKind.MutationResult, DiagnosticOutcome.Failed, placement: diagnostic);
       using var entry = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "diagnostic.jsonl")));
       Assert.AreEqual(0d, entry.RootElement.GetProperty("placement").GetProperty("actual").GetProperty("width").GetDouble());
       Assert.AreEqual(19, entry.RootElement.GetProperty("placement").GetProperty("cell").GetProperty("column").GetInt32());
       Assert.IsFalse(entry.RootElement.TryGetProperty("workbookPath", out _));
-      Assert.AreEqual(77d, entry.RootElement.GetProperty("placement").GetProperty("expectedTopSingle").GetDouble());
-      Assert.AreEqual(0.25, entry.RootElement.GetProperty("placement").GetProperty("additionalPositionRoundingLimitPoints").GetDouble());
+      Assert.AreEqual(77d, entry.RootElement.GetProperty("placement").GetProperty("expectedTopRounded").GetDouble());
+      Assert.AreEqual(78d, entry.RootElement.GetProperty("placement").GetProperty("actualTopRounded").GetDouble());
       Assert.IsTrue(entry.RootElement.GetProperty("placement").GetProperty("topMatchesAllowedPosition").GetBoolean());
       Assert.IsFalse(string.IsNullOrWhiteSpace(entry.RootElement.GetProperty("appVersion").GetString()));
-      Assert.IsTrue(entry.RootElement.GetProperty("placement").GetProperty("sizeCorrectionAttempted").GetBoolean());
-      Assert.AreEqual(119.7, entry.RootElement.GetProperty("placement").GetProperty("beforeSizeCorrection").GetProperty("width").GetDouble());
-      Assert.AreEqual(1d, entry.RootElement.GetProperty("placement").GetProperty("insertedImageSizeTolerancePoints").GetDouble());
+      Assert.AreEqual(78.049, entry.RootElement.GetProperty("placement").GetProperty("actual").GetProperty("top").GetDouble());
+      Assert.AreEqual(1d, entry.RootElement.GetProperty("placement").GetProperty("comparisonTolerancePoints").GetDouble());
+      Assert.AreEqual(0.1, entry.RootElement.GetProperty("placement").GetProperty("comparisonPrecisionPoints").GetDouble());
     }
     finally { if (Directory.Exists(folder)) Directory.Delete(folder, true); }
   }

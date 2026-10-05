@@ -52,7 +52,7 @@ public sealed class ExcelManagedReplacementLayoutService
 
     var fitted = sizingService.FitToWidth(image, width);
     var extraHeight = fitted.HeightPoints - target.HeightPoints;
-    if (extraHeight <= 0.05)
+    if (!PlacementGeometryComparison.Exceeds(extraHeight, 0))
     {
       return new ReplacementLayoutResult(true, fitted, left, null, "追加行は不要です。");
     }
@@ -87,7 +87,7 @@ public sealed class ExcelManagedReplacementLayoutService
       target.TopLeftCell.Row).Snapshot?.RowHeights
       .Where(pair => pair.Key >= mutated.StartRow && pair.Key < mutated.StartRow + mutated.Count)
       .Sum(pair => pair.Value) ?? 0;
-    if (insertedHeight + 0.05 < extraHeight)
+    if (PlacementGeometryComparison.Exceeds(extraHeight, insertedHeight))
     {
       var applied = new AppliedRowInsertion(mutated.WorksheetName, mutated.StartRow, mutated.Count, insertion.Reason);
       var reverted = rowMutationService.DeleteRowsIfSafe(workbook, mutated.WorksheetName, mutated.StartRow, mutated.Count);

@@ -57,7 +57,8 @@ public sealed class ImageSizingServiceTests
   [TestMethod]
   public void AtScale_RejectsScaleThatExceedsAvailableWidth()
   {
+    Assert.AreEqual(269, service.AtScale(new ImageDimensions(100, 50), 268, 2.69).WidthPoints);
     Assert.ThrowsExactly<ArgumentOutOfRangeException>(() =>
-      service.AtScale(new ImageDimensions(100, 50), 268, 2.69));
+      service.AtScale(new ImageDimensions(100, 50), 268, 2.691));
   }
 }

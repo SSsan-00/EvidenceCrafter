@@ -13,10 +13,6 @@ namespace EvidenceCrafter.Excel;
 /// </summary>
 public sealed class ExcelImagePlacementService
 {
-  internal const double AdditionalPositionRoundingLimitPoints = 0.25;
-  internal const double InsertedImageSizeTolerancePoints = 1.0;
-  // ponytail: correct small drifts once before the 1pt acceptance check; no retry loop.
-  internal const double MaximumInsertedSizeCorrectionPoints = 0.5;
   private const int MsoFalse = 0;
   private const int MsoTrue = -1;
   private const int XlMove = 2;
@@ -472,16 +468,12 @@ public sealed class ExcelImagePlacementService
     var insertionAttempted = false;
     ImagePlacementGeometry? expected = null;
     ImagePlacementGeometry? actual = null;
-    ImagePlacementGeometry? beforeSizeCorrection = null;
     double? appliedScale = null;
     var stage = "BeforeInsert";
     ImagePlacementResult Fail(string message)
     {
       var diagnostic = CapturePlacementDiagnostic(application, targetCell, focusCell, side,
-        imageDimensions, appliedScale, stage, expected, actual) with
-      {
-        BeforeSizeCorrection = beforeSizeCorrection,
-      };
+        imageDimensions, appliedScale, stage, expected, actual);
       var restored = !insertionAttempted || TryDeleteShape(shape, shapes);
       return ImagePlacementResult.Failed(restored ? message :
         message + " 挿入画像の取り消しを確認できません。追加の操作を止め、保存せずExcelの状態を確認してください。") with
@@ -580,29 +572,8 @@ public sealed class ExcelImagePlacementService
       if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal))
         return Fail("挿入画像の管理名を確認できませんでした。");
       stage = "VerifyGeometry";
-      var mismatch = VerifyGeometry(expected, actual, sizeTolerancePoints: 0.05);
-      if (mismatch is not null && CanCorrectInsertedSize(expected, actual))
-      {
-        beforeSizeCorrection = actual;
-        actual = null;
-        stage = "CorrectSize";
-        SetProperty(shape, "LockAspectRatio", MsoFalse);
-        SetProperty(shape, "Width", expected.Width);
-        SetProperty(shape, "Height", expected.Height);
-        SetProperty(shape, "LockAspectRatio", MsoTrue);
-        PlacementStageObserved?.Invoke("AfterSizeCorrection", shape);
-        stage = "ReadCorrectedShape";
-        insertedName = Convert.ToString(GetRequiredProperty(shape, "Name"), CultureInfo.InvariantCulture);
-        actual = new(ReadDoubleProperty(shape, "Left"), ReadDoubleProperty(shape, "Top"),
-          ReadDoubleProperty(shape, "Width"), ReadDoubleProperty(shape, "Height"));
-        if (!string.Equals(insertedName, shapeName, StringComparison.Ordinal))
-          return Fail("挿入画像の管理名を確認できませんでした。");
-        stage = "VerifyCorrectedGeometry";
-        mismatch = VerifyGeometry(expected, actual, sizeTolerancePoints: 0.05);
-      }
-      if (mismatch is not null && VerifyGeometry(expected, actual) is { } failure)
-        return Fail(failure);
-      if (actual.Width > availableWidth + 0.05)
+      if (VerifyGeometry(expected, actual) is { } failure) return Fail(failure);
+      if (PlacementGeometryComparison.Exceeds(actual.Width, availableWidth))
         return Fail("挿入画像の幅が配置可能幅を超えているため配置できません。");
 
       SetProperty(application, "EnableEvents", eventsWereEnabled);
@@ -792,21 +763,11 @@ public sealed class ExcelImagePlacementService
     }
   }
 
-  // AddPicture uses single-precision positions. Compare to its nearest representable
-  // coordinate as well; paired-image and external-edit checks remain separate.
-  internal static bool PositionMatches(double expected, double actual)
-  {
-    var rounded = (float)expected;
-    if (!float.IsFinite(rounded) || !double.IsFinite(actual) || expected < 0 || actual < 0) return false;
-    if (Math.Abs(actual - expected) <= 0.05 || Math.Abs(actual - (double)rounded) <= 0.05) return true;
-    // Excel may return an adjacent Single after converting the supplied position.
-    // ponytail: only measured adjacent steps up to 0.25pt; extend after native verification.
-    return Math.Abs(actual - (double)rounded) <= AdditionalPositionRoundingLimitPoints &&
-      (actual == (double)float.BitDecrement(rounded) || actual == (double)float.BitIncrement(rounded));
-  }
+  internal static bool PositionMatches(double expected, double actual) =>
+    float.IsFinite((float)expected) && float.IsFinite((float)actual) && expected >= 0 && actual >= 0 &&
+    PlacementGeometryComparison.Matches(expected, actual);
 
-  internal static string? VerifyGeometry(ImagePlacementGeometry expected, ImagePlacementGeometry actual,
-    double sizeTolerancePoints = InsertedImageSizeTolerancePoints)
+  internal static string? VerifyGeometry(ImagePlacementGeometry expected, ImagePlacementGeometry actual)
   {
     foreach (var (property, planned, measured, position) in new[]
     {
@@ -815,18 +776,12 @@ public sealed class ExcelImagePlacementService
     })
     {
       var valid = position ? PositionMatches(planned, measured) :
-        double.IsFinite(planned) && double.IsFinite(measured) && planned > 0 && measured > 0 && Math.Abs(planned - measured) <= sizeTolerancePoints;
+        double.IsFinite(planned) && double.IsFinite(measured) && planned > 0 && measured > 0 && PlacementGeometryComparison.Matches(planned, measured);
       if (!valid)
         return FormattableString.Invariant($"{(position ? "挿入画像の位置を確認できませんでした" : "挿入画像のサイズが予定値と一致しませんでした")}（{property}: 予定 {planned:R}pt、実際 {measured:R}pt、差 {measured - planned:R}pt）。");
     }
     return null;
   }
-
-  internal static bool CanCorrectInsertedSize(ImagePlacementGeometry expected, ImagePlacementGeometry actual) =>
-    expected.IsValid && actual.IsValid &&
-    PositionMatches(expected.Left, actual.Left) && PositionMatches(expected.Top, actual.Top) &&
-    Math.Abs(expected.Width - actual.Width) <= MaximumInsertedSizeCorrectionPoints &&
-    Math.Abs(expected.Height - actual.Height) <= MaximumInsertedSizeCorrectionPoints;
 
   private static ImagePlacementDiagnostic CapturePlacementDiagnostic(object application, object? cell,
     CellReference? reference, EvidenceSide side, ImageDimensions source, double? scale, string stage,
@@ -963,12 +918,12 @@ public sealed record ImagePlacementDiagnostic(string Stage, string? ExcelVersion
   CellReference? Cell, EvidenceSide Side, ImageDimensions SourceDimensions, double? Scale,
   ImagePlacementGeometry? Expected, ImagePlacementGeometry? Actual, bool? RowHidden, bool? ColumnHidden)
 {
-  public ImagePlacementGeometry? BeforeSizeCorrection { get; init; }
-  public bool SizeCorrectionAttempted => BeforeSizeCorrection is not null;
-  public double InsertedImageSizeTolerancePoints => ExcelImagePlacementService.InsertedImageSizeTolerancePoints;
-  public double? ExpectedLeftSingle => Expected is null ? null : (double)(float)Expected.Left;
-  public double? ExpectedTopSingle => Expected is null ? null : (double)(float)Expected.Top;
-  public double AdditionalPositionRoundingLimitPoints => ExcelImagePlacementService.AdditionalPositionRoundingLimitPoints;
+  public double ComparisonTolerancePoints => PlacementGeometryComparison.TolerancePoints;
+  public double ComparisonPrecisionPoints => PlacementGeometryComparison.PrecisionPoints;
+  public double? ExpectedLeftRounded => Expected is null ? null : PlacementGeometryComparison.Round(Expected.Left);
+  public double? ExpectedTopRounded => Expected is null ? null : PlacementGeometryComparison.Round(Expected.Top);
+  public double? ActualLeftRounded => Actual is null ? null : PlacementGeometryComparison.Round(Actual.Left);
+  public double? ActualTopRounded => Actual is null ? null : PlacementGeometryComparison.Round(Actual.Top);
   public bool? TopMatchesAllowedPosition => Expected is null || Actual is null ? null :
     ExcelImagePlacementService.PositionMatches(Expected.Top, Actual.Top);
 }

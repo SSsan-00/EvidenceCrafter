@@ -329,7 +329,7 @@ public sealed class ExcelAutomaticPlacementService
           AlternativeText = metadata.Serialize(),
         };
         var extra = pair.Height - before.HeightPoints;
-        var count = extra > 0.05 ? checked((int)Math.Ceiling(extra / 15) + 1) : 0;
+        var count = PlacementGeometryComparison.Exceeds(extra, 0) ? checked((int)Math.Ceiling(extra / 15) + 1) : 0;
         if ((long)pair.EndRow + count > ExcelWorksheetLimits.MaximumRow)
           return AutomaticPlacementResult.Failed("必要な行数がシート上限を超えます。", initialAnalysis);
         var relocationInsertion = pair.TargetStartRow != pair.StartRow
@@ -476,8 +476,8 @@ public sealed class ExcelAutomaticPlacementService
       if (verifiedStep.Pair is { } verifiedPair)
       {
         var reference = new ExcelManagedShapeService().Inspect(workbook, placement.WorksheetName, verifiedPair.ShapeName);
-        if (reference.Shape is not { } actual || Math.Abs(actual.TopPoints - placement.Target!.TopPoints) > 0.05 ||
-          Math.Abs(actual.WidthPoints - verifiedPair.Width) > 0.05 || Math.Abs(actual.HeightPoints - verifiedPair.Height) > 0.05)
+        if (reference.Shape is not { } actual || !PlacementGeometryComparison.Matches(actual.TopPoints, placement.Target!.TopPoints) ||
+          !PlacementGeometryComparison.Matches(actual.WidthPoints, verifiedPair.Width) || !PlacementGeometryComparison.Matches(actual.HeightPoints, verifiedPair.Height))
           return Compensate(workbook, initialAnalysis, placed, appliedRows,
             "対応画像の実際の位置・サイズが計画と一致しないため配置を取り消しました。");
         referenceGuard ??= new PairedImageResize(actual, actual, null);
@@ -729,7 +729,7 @@ public sealed class ExcelAutomaticPlacementService
     if (referenceWidth <= 0) throw new InvalidOperationException("参照画像の配置幅がありません。");
     if (preserveReferenceSize)
     {
-      if (reference.WidthPoints > referenceWidth + 0.05)
+      if (PlacementGeometryComparison.Exceeds(reference.WidthPoints, referenceWidth))
         throw new InvalidOperationException("参照画像が配置範囲を超えているため整合性を確認できません。");
       var currentScale = reference.SourceDimensions is { } original
         ? reference.WidthPoints / original.WidthPoints

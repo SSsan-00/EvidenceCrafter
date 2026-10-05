@@ -1,6 +1,6 @@
 # EvidenceCrafter
 
-Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.37` では新規画像の幅・高さについて予定との差をそれぞれ1ptまで許容します。0.5pt以内のずれは一度だけ明示設定し、残る差が1pt以内ならExcelの実サイズを履歴へ保存します。配置可能幅を超える画像は拒否し、位置合わせと既存画像の外部編集検知は従来の判定を使います。[今回の検証記録](docs/review-size-tolerance-1pt-2026-10-05.md)。前版の補正は[サイズ差への限定補正](docs/review-size-verification-2026-10-05.md)、位置の丸めは[Top検証の修正](docs/review-top-verification-2026-10-02.md)、印刷範囲付きブックの末尾整理は[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、画像挿入時の保護は[画像配置の検証記録](docs/review-inserted-image-verification-2026-10-01.md)、高速化は[追加改修検証記録](docs/review-excel-com-performance-2026-10-01.md)、上端合わせは[横並び改修検証記録](docs/review-same-side-backfill-2026-10-01.md)を参照してください。
+Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.38` では画像の位置・サイズ、NEW／OLDの上端合わせ、配置可能幅の超過を、双方の値を0.1pt単位に丸めて差1ptまで許容します。履歴にはExcelの実座標・実サイズを保存します。[今回の検証記録](docs/review-rounded-placement-1pt-2026-10-05.md)。前版のサイズ許容は[サイズ差1ptの検証](docs/review-size-tolerance-1pt-2026-10-05.md)、補正は[サイズ差への限定補正](docs/review-size-verification-2026-10-05.md)、印刷範囲付きブックの末尾整理は[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、高速化は[追加改修検証記録](docs/review-excel-com-performance-2026-10-01.md)を参照してください。
 
 ## 実装済み
 
