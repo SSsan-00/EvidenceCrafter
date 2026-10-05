@@ -70,7 +70,72 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void AutomaticPlacement_AdvancesAfterSafeTailFailureAndPreservesRecoveryGuard() =>
     RunSupervisedScenario(Scenario.PlacementAdvance);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, ImageVerification, SizeCorrection, PlacementAdvance }
+  [TestMethod]
+  public void SplitCaseNumbering_ResolvesPlacesNavigatesAndReplays() =>
+    RunSupervisedScenario(Scenario.SplitNumbering);
+
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, ImageVerification, SizeCorrection, PlacementAdvance, SplitNumbering }
+
+  private static void VerifySplitCaseNumbering(object sheet, WorkbookIdentity identity, string path)
+  {
+    SetRangeProperty(sheet, "A1:AF60", "NumberFormat", "0.00");
+    SetCellValue(sheet, 4, 3, "NEW"); SetCellValue(sheet, 4, 18, "OLD");
+    SetCellValue(sheet, 5, 1, 1); SetCellValue(sheet, 6, 2, 1);
+    SetCellValue(sheet, 15, 2, 2);
+    SetCellValue(sheet, 25, 1, 2); SetCellValue(sheet, 26, 2, 1);
+    SetCellValue(sheet, 40, 1, 3); SetCellValue(sheet, 40, 2, 1);
+    var snapshots = new ExcelSheetSnapshotService();
+    var captured = snapshots.Capture(identity, "OtherTarget", scopeCaseLabel: "1-1", scopeShapes: true);
+    Assert.IsTrue(captured.Succeeded, captured.Message);
+    var signals = captured.Snapshot!.LayoutSignals;
+    CollectionAssert.AreEqual(new[] { 6, 15, 26, 40 }, signals.Anchors.Select(anchor => anchor.Row).ToArray());
+    CollectionAssert.AreEqual(new[] { "1-1", "1-2", "2-1", "3-1" },
+      signals.Anchors.Select(ExcelAutomaticPlacementService.FormatCaseLabel).ToArray());
+    CollectionAssert.AreEqual(new[] { 3 }, signals.NewHeaderColumns.ToArray());
+    CollectionAssert.AreEqual(new[] { 18 }, signals.OldHeaderColumns.ToArray());
+    using (var bitmap = new System.Drawing.Bitmap(120, 20)) bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+    var images = new[] { new AutomaticPlacementImage(path, new(120, 20)) };
+    var automatic = new ExcelAutomaticPlacementService();
+    var analysis = automatic.Analyze(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "1-1");
+    Assert.IsTrue(analysis.Succeeded, analysis.Message);
+    Assert.AreEqual(6, analysis.LayoutAnalysis!.Layout!.StartRow);
+    Assert.AreEqual(14, analysis.LayoutAnalysis.Layout.EndRow);
+    var placed = automatic.PlaceImages(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "1-1");
+    Assert.IsTrue(placed.Succeeded, placed.Message);
+    Assert.IsEmpty(placed.AppliedInsertions);
+    var original = placed.PlacedImages.Single();
+    var managed = new ExcelManagedShapeService();
+    Assert.IsTrue(managed.Delete(identity, original.Target).Succeeded);
+    var redone = new ExcelImagePlacementService().PlaceImage(identity, "OtherTarget", original.FocusCell,
+      EvidenceSide.New, path, images[0].Dimensions, original.AvailableWidthPoints,
+      scaleOverride: original.Plan.Image.Scale, verticalOffsetPoints: original.Plan.VerticalOffsetPoints);
+    Assert.IsTrue(redone.Succeeded, redone.Message);
+    Assert.AreEqual(original.Target.TopPoints, redone.Target!.TopPoints);
+    Assert.IsTrue(managed.Delete(identity, redone.Target).Succeeded);
+    var navigator = new ExcelCaseNavigationService();
+    foreach (var (from, to, row) in new[] { ("1-1", "1-2", 16), ("1-2", "2-1", 27), ("2-1", "3-1", 41) })
+    {
+      var next = navigator.Navigate(identity, "OtherTarget", CaseNavigationDirection.Next, from, EvidenceSide.New, sameCaseThenNext: false);
+      Assert.IsTrue(next.Succeeded, next.Message);
+      Assert.AreEqual(to, next.CaseLabel);
+      Assert.AreEqual(row, next.Target.Row);
+      var previous = navigator.Navigate(identity, "OtherTarget", CaseNavigationDirection.Previous, to, EvidenceSide.New, sameCaseThenNext: false);
+      Assert.IsTrue(previous.Succeeded, previous.Message);
+      Assert.AreEqual(from, previous.CaseLabel);
+    }
+    // Also accept headers immediately before the B-number row.
+    SetCellValue(sheet, 4, 3, ""); SetCellValue(sheet, 4, 18, "");
+    SetCellValue(sheet, 5, 3, "NEW"); SetCellValue(sheet, 5, 18, "OLD");
+    var alternate = automatic.Analyze(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "2-1");
+    Assert.IsTrue(alternate.Succeeded, alternate.Message);
+    Assert.AreEqual(26, alternate.LayoutAnalysis!.Layout!.StartRow);
+    var majorCell = GetRequiredProperty(sheet, "Cells", 5, 1);
+    try { Assert.AreEqual(1d, Convert.ToDouble(GetRequiredProperty(majorCell, "Value2"), CultureInfo.InvariantCulture)); }
+    finally { Release(majorCell); }
+    SetCellValue(sheet, 50, 2, 1);
+    var duplicate = automatic.Analyze(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: "3-1");
+    Assert.IsFalse(duplicate.Succeeded);
+  }
 
   private static void RunSupervisedScenario(Scenario scenario, Action<object, WorkbookIdentity, string>? performanceSample = null)
   {
@@ -105,7 +170,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       thread.SetApartmentState(ApartmentState.STA);
       thread.Start();
       if (!completed.Task.Wait(TimeSpan.FromSeconds(scenario == Scenario.SameSidePerformance ? 900 :
-        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.RowMutationOptimization or Scenario.ImageVerification or Scenario.SizeCorrection or Scenario.PlacementAdvance ? 180 : 55)))
+        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.RowMutationOptimization or Scenario.ImageVerification or Scenario.SizeCorrection or Scenario.PlacementAdvance or Scenario.SplitNumbering ? 180 : 55)))
       {
         supervisor.SuppressComCleanup();
         var terminated = supervisor.TryTerminate(out var terminationFailure);
@@ -241,6 +306,12 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
           string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
         VerifyAutomaticPlacementAdvance(otherWorksheet, identity, placementImagePath);
+      }
+      else if (scenario == Scenario.SplitNumbering)
+      {
+        var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
+          string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
+        VerifySplitCaseNumbering(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.SameSideBackfill)
       {

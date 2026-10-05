@@ -7,7 +7,7 @@ namespace EvidenceCrafter.Tests;
 public sealed class CaseAnchorNormalizerTests
 {
   [TestMethod]
-  public void Normalize_InheritsOnlyConfirmedMajorAndIgnoresText()
+  public void Normalize_InheritsNumericMajorWithoutMinorAndIgnoresText()
   {
     CaseAnchorSignal[] anchors =
     [
@@ -20,7 +20,27 @@ public sealed class CaseAnchorNormalizerTests
     ];
     var result = CaseAnchorNormalizer.Normalize(anchors);
     CollectionAssert.AreEqual(new[] { 3, 20, 30 }, result.Select(anchor => anchor.Row).ToArray());
-    CollectionAssert.AreEqual(new[] { "1", "1", "1" }, result.Select(anchor => anchor.ColumnAValue).ToArray());
+    CollectionAssert.AreEqual(new[] { "1", "1", "9" }, result.Select(anchor => anchor.ColumnAValue).ToArray());
+  }
+
+  [TestMethod]
+  public void Normalize_UsesMinorRowForSplitNumberingAndUpdatesMajor()
+  {
+    CaseAnchorSignal[] anchors =
+    [
+      new(2, false, true, false, null, "1"),
+      new(5, true, false, false, "１", null),
+      new(6, false, true, false, null, "１"),
+      new(15, false, true, false, null, "2"),
+      new(25, true, false, false, "2", null),
+      new(26, false, true, false, null, "1"),
+      new(40, true, true, false, "3", "1"),
+    ];
+    var result = CaseAnchorNormalizer.Normalize(anchors.Reverse());
+    CollectionAssert.AreEqual(new[] { 6, 15, 26, 40 }, result.Select(anchor => anchor.Row).ToArray());
+    CollectionAssert.AreEqual(new[] { "1-1", "1-2", "2-1", "3-1" },
+      result.Select(anchor => $"{anchor.ColumnAValue}-{anchor.ColumnBValue}").ToArray());
+    CollectionAssert.AreEqual(result, CaseAnchorNormalizer.Normalize(result));
   }
 
   [TestMethod]

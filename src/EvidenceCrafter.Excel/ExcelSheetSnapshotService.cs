@@ -334,7 +334,7 @@ public sealed class ExcelSheetSnapshotService
       }
       var hyperlinks = navigationOnly ? [] : ReadLinkedCells(worksheet, "Hyperlinks");
       captureStage = "reading Case anchors";
-      IReadOnlyList<CaseAnchorSignal> anchors = CaseAnchorNormalizer.Normalize(ReadAnchors(
+      var rawAnchors = ReadAnchors(
         worksheet,
         values,
         formulas,
@@ -342,11 +342,22 @@ public sealed class ExcelSheetSnapshotService
         firstColumn,
         rowCount,
         columnCount,
-        lastColumn));
+        lastColumn);
+      IReadOnlyList<CaseAnchorSignal> anchors = CaseAnchorNormalizer.Normalize(rawAnchors);
       var firstAnchorRow = anchors.Count == 0 ? Math.Max(firstRow, 1) : anchors[0].Row;
       captureStage = "reading ordered Side headers";
       var sideHeaderColumns = ReadHeaderColumns(
         values, firstAnchorRow - 1, firstRow, firstColumn, rowCount, columnCount, lastColumn);
+      if (sideHeaderColumns.Count == 0 && anchors.Count > 0)
+      {
+        var firstCase = $"{anchors[0].ColumnAValue}-{anchors[0].ColumnBValue}";
+        var majorRow = rawAnchors.LastOrDefault(anchor => anchor.Row <= firstAnchorRow &&
+          !string.IsNullOrWhiteSpace(anchor.ColumnAValue) &&
+          CaseAnchorNormalizer.NormalizeCaseLabel($"{anchor.ColumnAValue}-{anchors[0].ColumnBValue}") == firstCase)?.Row;
+        if (majorRow is { } row && row < firstAnchorRow)
+          sideHeaderColumns = ReadHeaderColumns(
+            values, row - 1, firstRow, firstColumn, rowCount, columnCount, lastColumn);
+      }
       var newHeaderColumns = sideHeaderColumns.Take(1).ToArray();
       var oldHeaderColumns = sideHeaderColumns.Skip(1).ToArray();
       captureStage = "reading vertical Case boundaries";

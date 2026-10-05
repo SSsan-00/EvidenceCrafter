@@ -1,6 +1,6 @@
 # EvidenceCrafter
 
-Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.38` では画像の位置・サイズ、NEW／OLDの上端合わせ、配置可能幅の超過を、双方の値を0.1pt単位に丸めて差1ptまで許容します。履歴にはExcelの実座標・実サイズを保存します。[今回の検証記録](docs/review-rounded-placement-1pt-2026-10-05.md)。前版のサイズ許容は[サイズ差1ptの検証](docs/review-size-tolerance-1pt-2026-10-05.md)、補正は[サイズ差への限定補正](docs/review-size-verification-2026-10-05.md)、印刷範囲付きブックの末尾整理は[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、高速化は[追加改修検証記録](docs/review-excel-com-performance-2026-10-01.md)を参照してください。
+Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.39` ではA列の番号を下へ引き継ぎ、B列に番号がある行をCASEの開始行として認識します。A5＝1・B6＝1なら、6行目からCASE「1-1」が始まります。同じ行にA・Bの番号がある形式も使用できます。[今回の検証記録](docs/review-split-case-numbering-2026-10-06.md)。画像の位置・サイズ、NEW／OLDの上端合わせ、配置可能幅は従来どおり0.1pt単位に丸めて差1ptまで許容し、履歴にはExcelの実座標・実サイズを保存します。[配置の1pt許容](docs/review-rounded-placement-1pt-2026-10-05.md)、[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、[高速化の検証記録](docs/review-excel-com-performance-2026-10-01.md)も参照してください。
 
 ## 実装済み
 

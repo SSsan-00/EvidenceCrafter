@@ -19,12 +19,12 @@ public static class CaseAnchorNormalizer
         ? inheritedMajor
         : NormalizeNumber(anchor.ColumnAValue);
       var minor = NormalizeNumber(anchor.ColumnBValue);
+      if (major is not null) inheritedMajor = major;
       if (major is null || minor is null)
       {
         continue;
       }
 
-      inheritedMajor = major;
       confirmed.Add(anchor with { ColumnAValue = major, ColumnBValue = minor });
     }
 

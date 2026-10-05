@@ -83,6 +83,8 @@ dotnet test tests\EvidenceCrafter.Tests -c Release --no-build --filter 'FullyQua
 
 ## 完了条件
 
+preview.39の `SplitCaseNumbering_ResolvesPlacesNavigatesAndReplays` はA5／B6の別行番号、大番号の変更、従来の同じ行番号、A列行またはB列行の直前にあるSide見出し、CASE開始・終端、指定CASEへの配置、削除・再配置、前後CASE移動、重複CASEの拒否を専用の一時Excelブックで確認する。
+
 - Release buildでwarning 0
 - Excel非依存テストが全件成功
 - `bootstrap.ps1 -Publish` が単一EXEを生成
