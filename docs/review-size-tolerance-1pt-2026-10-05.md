@@ -1,6 +1,6 @@
 # 新規画像のサイズ差1pt許容
 
-2026-10-05のユーザー依頼「1ptまで許容する実装にしてremote push」に対応。アプリ版preview.37。
+2026-10-05のユーザー依頼「1ptまで許容する実装にしてremote push」に対応。アプリ版preview.37。改修ソース: `f1ef65fd19b240115e985774ed6d5290b5459d91`。実装・検証・発行完了。
 
 ## 変更
 
@@ -30,6 +30,13 @@
 
 ## 発行
 
-検証後に `bootstrap.ps1 -Publish -Runtime win-x64` で単一EXEを生成し、SHA-256 sidecarと照合する。結果は生成後に追記する。
+`bootstrap.ps1 -Publish -Runtime win-x64` が成功した。最終Releaseビルドも警告0・エラー0、非Excelテスト171／171合格、スキップ0。単一EXEとSHA-256 sidecarのみの出力を確認し、ハッシュが一致した。
+
+- EXE: `artifacts/publish/win-x64/EvidenceCrafter.exe`
+- ProductVersion: `0.1.0-preview.37+f1ef65fd19b240115e985774ed6d5290b5459d91`
+- SHA-256: `5A02C63D46134B677C63B4B229B1F05E966E6549BF563C9BFC834E8D916C43F8`
+- 発行ログ: `artifacts/size-tolerance-1pt/publish.log`
+
+ソースと検証記録をremote mainへ反映する。EXEと生記録は既存方針どおりignored artifact。
 
 旧preview.36は `artifacts/size-tolerance-1pt/EvidenceCrafter-preview36.exe` に退避済み。SHA-256は `A3C707ECE430DA6C993183E30F8AF17FC3655F17AF1C824B46866593A5CF969C`。
