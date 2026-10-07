@@ -72,6 +72,23 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.AreEqual(1, Count());
       }
 
+      ExcelImagePlacementService.PlacementStageObserved = null;
+      var offsetCell = GetRequiredProperty(sheet, "Cells", 6, 4);
+      double cellTop;
+      try { cellTop = Read(offsetCell, "Top"); }
+      finally { Release(offsetCell); }
+      foreach (var offset in new[] { -1d, -0.3 })
+      {
+        var normalized = service.PlaceImage(identity, "OtherTarget", new(6, 4), EvidenceSide.New,
+          path, new(745.5, 745.5), 745.5, verticalOffsetPoints: offset);
+        Assert.IsTrue(normalized.Succeeded, normalized.Message);
+        Assert.AreEqual(cellTop, normalized.Target!.TopPoints, 0.05);
+        Assert.IsTrue(managed.Delete(identity, normalized.Target).Succeeded);
+        Assert.AreEqual(1, Count());
+      }
+      Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => service.PlaceImage(identity, "OtherTarget",
+        new(6, 4), EvidenceSide.New, path, new(745.5, 745.5), 745.5, verticalOffsetPoints: -1.001));
+
       // Width and scale may each be valid, but their combined excess still exceeds the side limit.
       ExcelImagePlacementService.PlacementStageObserved = (stage, shape) =>
       { if (stage == "AfterAttributes") Change(shape, "Width", 746.5); };

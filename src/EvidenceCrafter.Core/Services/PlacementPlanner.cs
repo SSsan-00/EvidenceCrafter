@@ -13,14 +13,20 @@ public sealed class PlacementPlanner(ImageSizingService imageSizingService)
   private const int PlacementColumnInset = 1;
   private const int MaximumWorksheetRow = ExcelWorksheetLimits.MaximumRow;
 
+  public static double NormalizeVerticalOffset(double offset)
+  {
+    if (!double.IsFinite(offset) || offset < -PlacementGeometryComparison.TolerancePoints)
+      throw new ArgumentOutOfRangeException(nameof(offset), "The vertical offset must be finite and no less than -1pt.");
+    return Math.Max(0, offset);
+  }
+
   public PlacementPlan Plan(PlacementRequest request)
   {
     ArgumentNullException.ThrowIfNull(request);
     ArgumentNullException.ThrowIfNull(request.Layout);
     ArgumentNullException.ThrowIfNull(request.Contents);
     ArgumentNullException.ThrowIfNull(request.RowHeights);
-    if (!double.IsFinite(request.VerticalOffsetPoints) || request.VerticalOffsetPoints < 0)
-      throw new ArgumentOutOfRangeException(nameof(request), "The vertical offset must be finite and non-negative.");
+    request = request with { VerticalOffsetPoints = NormalizeVerticalOffset(request.VerticalOffsetPoints) };
 
     if (request.ImageGapRows < MinimumImageGapRows ||
       request.ImageGapRows > MaximumWorksheetRow ||

@@ -14,7 +14,15 @@ public sealed class PlacementPlannerTests
     var plan = planner.Plan(request);
     Assert.AreEqual(7, plan.EndRow);
     Assert.AreEqual(8, plan.VerticalOffsetPoints);
-    foreach (var offset in new[] { -1.0, double.NaN, double.PositiveInfinity })
+    var zero = planner.Plan(request with { VerticalOffsetPoints = 0 });
+    foreach (var offset in new[] { -1.0, -0.3, -double.Epsilon })
+    {
+      var normalized = planner.Plan(request with { VerticalOffsetPoints = offset });
+      Assert.AreEqual(0, normalized.VerticalOffsetPoints);
+      Assert.AreEqual(zero.EndRow, normalized.EndRow);
+      CollectionAssert.AreEqual(zero.Insertions.ToArray(), normalized.Insertions.ToArray());
+    }
+    foreach (var offset in new[] { -1.001, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
       Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => planner.Plan(request with { VerticalOffsetPoints = offset }));
   }
   [TestMethod]

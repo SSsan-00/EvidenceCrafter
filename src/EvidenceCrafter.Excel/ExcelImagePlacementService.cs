@@ -40,8 +40,7 @@ public sealed class ExcelImagePlacementService
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
     ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
-    if (!double.IsFinite(verticalOffsetPoints) || verticalOffsetPoints < 0)
-      throw new ArgumentOutOfRangeException(nameof(verticalOffsetPoints));
+    verticalOffsetPoints = PlacementPlanner.NormalizeVerticalOffset(verticalOffsetPoints);
     if (requestedCell is not null && !IsValidCell(requestedCell.Value))
     {
       throw new ArgumentOutOfRangeException(nameof(requestedCell));

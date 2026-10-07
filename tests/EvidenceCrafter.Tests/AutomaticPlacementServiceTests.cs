@@ -327,6 +327,32 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
+  public void AnalyzeSnapshot_NormalizesSmallNegativePairOffsetsAndRejectsInvalidValues()
+  {
+    var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
+    foreach (var offset in new[] { -1d, -0.3, 0, 7.25, -1.001, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+    {
+      var snapshot = Snapshot(signals) with
+      {
+        Shapes = [new SnapshotShape("old-1", 5, 10, 19, 25, true)
+        {
+          WidthPoints = 100, HeightPoints = 50, TopPoints = 60,
+          SourceDimensions = new ImageDimensions(200, 100), VerticalOffsetPoints = offset,
+        }],
+      };
+      var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.New,
+        [new AutomaticPlacementImage("new.png", new ImageDimensions(100, 50))]);
+      var accepted = double.IsFinite(offset) && offset >= -1;
+      Assert.AreEqual(accepted, result.Succeeded, $"Offset={offset}: {result.Message}");
+      if (accepted)
+      {
+        Assert.AreEqual(Math.Max(0, offset), result.Steps[0].Plan.VerticalOffsetPoints);
+        Assert.AreEqual(offset, snapshot.Shapes[0].VerticalOffsetPoints);
+      }
+    }
+  }
+
+  [TestMethod]
   public void AnalyzeSnapshot_RejectsCaseOutsideShapeScope()
   {
     var snapshot = Snapshot(FixtureLoader.LoadLayout("default-final-case.json")) with

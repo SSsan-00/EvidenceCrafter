@@ -1,6 +1,6 @@
 # EvidenceCrafter
 
-Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.39` ではA列の番号を下へ引き継ぎ、B列に番号がある行をCASEの開始行として認識します。A5＝1・B6＝1なら、6行目からCASE「1-1」が始まります。同じ行にA・Bの番号がある形式も使用できます。[今回の検証記録](docs/review-split-case-numbering-2026-10-06.md)。画像の位置・サイズ、NEW／OLDの上端合わせ、配置可能幅は従来どおり0.1pt単位に丸めて差1ptまで許容し、履歴にはExcelの実座標・実サイズを保存します。[配置の1pt許容](docs/review-rounded-placement-1pt-2026-10-05.md)、[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、[高速化の検証記録](docs/review-excel-com-performance-2026-10-01.md)も参照してください。
+Case&Evidence形式のExcelブックへスクリーンショットを安全に配置するWindowsデスクトップツールです。`0.1.0-preview.40` ではセル上端からの縦オフセットが−1pt〜0ptの場合、0ptとして配置します。大きな負値や無効な数値は拒否します。[今回の検証記録](docs/review-negative-vertical-offset-2026-10-07.md)。A列の番号を下へ引き継ぐ[別行CASE番号への対応](docs/review-split-case-numbering-2026-10-06.md)も維持しています。画像の位置・サイズ、NEW／OLDの上端合わせ、配置可能幅は従来どおり0.1pt単位に丸めて差1ptまで許容し、履歴にはExcelの実座標・実サイズを保存します。[配置の1pt許容](docs/review-rounded-placement-1pt-2026-10-05.md)、[CASE末尾整理の回帰修正](docs/review-case-tail-navigation-2026-10-01.md)、[高速化の検証記録](docs/review-excel-com-performance-2026-10-01.md)も参照してください。
 
 ## 実装済み
 

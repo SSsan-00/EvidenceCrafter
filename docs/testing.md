@@ -83,6 +83,8 @@ dotnet test tests\EvidenceCrafter.Tests -c Release --no-build --filter 'FullyQua
 
 ## 完了条件
 
+preview.40では負の縦オフセット−1pt／−0.3ptを0ptとして計画・挿入する。`PlacementPlannerTests` と `AutomaticPlacementServiceTests` で必要行数と後追い解析、非有限値・許容範囲外の拒否を確認し、`InsertedImages_AllowRoundedGeometryAndPreserveFailureRecovery` で実Excelへの負オフセット指定・削除・範囲外の拒否を確認する。
+
 preview.39の `SplitCaseNumbering_ResolvesPlacesNavigatesAndReplays` はA5／B6の別行番号、大番号の変更、従来の同じ行番号、A列行またはB列行の直前にあるSide見出し、CASE開始・終端、指定CASEへの配置、削除・再配置、前後CASE移動、重複CASEの拒否を専用の一時Excelブックで確認する。
 
 - Release buildでwarning 0
