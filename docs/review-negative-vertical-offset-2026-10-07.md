@@ -15,3 +15,15 @@ Releaseビルドは警告0・エラー0。非Excelテスト173件が成功。−
 実Excelテスト3件が成功、スキップ0（`artifacts/negative-vertical-offset/excel.trx`）。−1pt／−0.3ptを直接指定した挿入がセル上端への配置になり、実座標による削除が成功すること、−1.001ptが拒否されることを確認した。NEW／OLDの上端合わせ、行追加後の参照画像復元、セル内容の移動と行Undoも既存シナリオで確認した。
 
 報告元ブックでの自然発生原因を確定したものではなく、専用Excelプロセスと一時ブックでコード上の入力条件を再現して検証した。
+
+## 発行
+
+改修ソース: `87f51bff6cd8734f6e904beed23175e230b13fef`。
+`bootstrap.ps1 -Publish -Runtime win-x64` が成功。最終Releaseビルドは警告0・エラー0、非Excelテスト173／173成功。単一EXEとSHA-256 sidecarの一致を確認した。
+
+- EXE: `artifacts/publish/win-x64/EvidenceCrafter.exe`
+- ProductVersion: `0.1.0-preview.40+87f51bff6cd8734f6e904beed23175e230b13fef`
+- SHA-256: `9953662C6F97418F784F772CDEED9D45F423B894E8DD7A5C37EF46DF02A99F98`
+- 発行ログ: `artifacts/negative-vertical-offset/publish.log`
+
+前版は `artifacts/negative-vertical-offset/EvidenceCrafter-preview39.exe` に退避した。ソースと検証記録をremote mainへ反映し、EXEと生記録は既存方針どおりignored artifact。
