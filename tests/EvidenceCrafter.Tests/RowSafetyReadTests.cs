@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using EvidenceCrafter.Excel;
 using EvidenceCrafter.Core.Models;
 
@@ -43,6 +44,36 @@ public sealed class RowSafetyReadTests
     Assert.IsFalse((bool)check.Invoke(null, [new object[3, 2], 2, 3])!);
     Assert.IsFalse((bool)check.Invoke(null, ["unexpected scalar", 2, 3])!);
     Assert.IsTrue((bool)check.Invoke(null, [false, 1, 1])!);
+  }
+
+  [TestMethod]
+  public void UniformFingerprintProperty_UsesOnlyKnownValuesAndFallsBackOnFailure()
+  {
+    var read = typeof(ExcelRowMutationService).GetMethod("ReadUniformFingerprintProperty", BindingFlags.Static | BindingFlags.NonPublic)!;
+    var append = typeof(ExcelRowMutationService).GetMethod("AppendFingerprintProperty", BindingFlags.Static | BindingFlags.NonPublic)!;
+    foreach (var value in new object?[] { false, true, null, DBNull.Value, "True", 0 })
+    {
+      var block = new FingerprintProperty(value);
+      var uniform = read.MakeGenericMethod(typeof(bool)).Invoke(null, [block, "Value"]);
+      Assert.AreEqual(value is bool ? value : null, uniform);
+      var cell = new FingerprintProperty(true);
+      var builder = new StringBuilder();
+      append.Invoke(null, [builder, cell, "Value", false, uniform]);
+      Assert.AreEqual(value is false ? "False;" : "True;", builder.ToString());
+      Assert.AreEqual(uniform is null ? 1 : 0, cell.Reads);
+    }
+
+    var unavailable = new UnreadableRow();
+    Assert.IsNull(read.MakeGenericMethod(typeof(bool)).Invoke(null, [unavailable, "Value2"]));
+    var failed = new StringBuilder();
+    append.Invoke(null, [failed, unavailable, "Value2", false, null]);
+    Assert.AreEqual("<unsupported>;", failed.ToString());
+  }
+
+  public sealed class FingerprintProperty(object? value)
+  {
+    public int Reads { get; private set; }
+    public object? Value { get { Reads++; return value; } }
   }
 
   public sealed class UnreadableRow

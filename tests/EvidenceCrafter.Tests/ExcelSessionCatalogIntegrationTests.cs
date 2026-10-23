@@ -59,6 +59,10 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     RunSupervisedScenario(Scenario.RowMutationOptimization);
 
   [TestMethod]
+  public void RowFingerprints_WithMixedFormatting_MatchCellReads() =>
+    RunSupervisedScenario(Scenario.RowFingerprints);
+
+  [TestMethod]
   public void InsertedImages_VerifyGeometryAndPreserveFailedRollback() =>
     RunSupervisedScenario(Scenario.ImageVerification);
 
@@ -74,7 +78,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void SplitCaseNumbering_ResolvesPlacesNavigatesAndReplays() =>
     RunSupervisedScenario(Scenario.SplitNumbering);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, ImageVerification, SizeCorrection, PlacementAdvance, SplitNumbering }
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, RowFingerprints, ImageVerification, SizeCorrection, PlacementAdvance, SplitNumbering }
 
   private static void VerifySplitCaseNumbering(object sheet, WorkbookIdentity identity, string path)
   {
@@ -288,6 +292,10 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
           string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
         VerifyRowMutationOptimizations(otherWorksheet, identity, placementImagePath);
+      }
+      else if (scenario == Scenario.RowFingerprints)
+      {
+        VerifyRowFingerprintReads(otherWorksheet);
       }
       else if (scenario == Scenario.ImageVerification)
       {

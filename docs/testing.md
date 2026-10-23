@@ -9,6 +9,9 @@
 CASE末尾整理の追加高速化・復旧用退避・故障注入の結果は
 [追加改修検証記録](review-excel-com-performance-2026-10-01.md) を参照。
 
+セル状態照合の通信削減、混在書式との同値性、処理時間の比較は
+[レスポンス改善の検証記録](review-response-performance-2026-10-24.md) を参照。
+
 ## 通常テスト
 
 `EvidenceCrafter.Tests` はExcelなしで動くCoreテストを既定とする。

@@ -1660,7 +1660,7 @@ public sealed class ExcelRowMutationService
     object? usedColumns = null;
     object? usedRows = null;
     object? rows = null;
-    object? fingerprintBlock = null, blockFirst = null, blockLast = null;
+    object? fingerprintBlock = null, blockFirst = null, blockLast = null, blockFont = null, blockConditions = null;
     try
     {
       usedRange = GetRequiredProperty(worksheet, "UsedRange");
@@ -1673,6 +1673,9 @@ public sealed class ExcelRowMutationService
         throw new InvalidOperationException("行状態の安全確認範囲が250,000セルを超えるため、履歴操作を中止しました。");
       }
       object? values = null, formulas = null, numberFormat = null, wrapText = null;
+      object? horizontalAlignment = null, verticalAlignment = null;
+      object? fontName = null, fontSize = null, fontBold = null, fontItalic = null;
+      var noFormatConditions = false;
       var hasValues = false;
       var hasFormulas = false;
       try
@@ -1682,8 +1685,19 @@ public sealed class ExcelRowMutationService
         fingerprintBlock = GetRequiredProperty(worksheet, "Range", blockFirst!, blockLast!);
         hasValues = TryGetProperty(fingerprintBlock, "Value2", out values) && IsFingerprintMatrix(values, count, columnCount);
         hasFormulas = TryGetProperty(fingerprintBlock, "Formula", out formulas) && IsFingerprintMatrix(formulas, count, columnCount);
-        _ = TryGetProperty(fingerprintBlock, "NumberFormat", out numberFormat);
-        _ = TryGetProperty(fingerprintBlock, "WrapText", out wrapText);
+        numberFormat = ReadUniformFingerprintProperty<string>(fingerprintBlock, "NumberFormat");
+        wrapText = ReadUniformFingerprintProperty<bool>(fingerprintBlock, "WrapText");
+        horizontalAlignment = ReadUniformFingerprintProperty<int>(fingerprintBlock, "HorizontalAlignment");
+        verticalAlignment = ReadUniformFingerprintProperty<int>(fingerprintBlock, "VerticalAlignment");
+        if (TryGetProperty(fingerprintBlock, "Font", out blockFont) && blockFont is not null)
+        {
+          fontName = ReadUniformFingerprintProperty<string>(blockFont, "Name");
+          fontSize = ReadUniformFingerprintProperty<double>(blockFont, "Size");
+          fontBold = ReadUniformFingerprintProperty<bool>(blockFont, "Bold");
+          fontItalic = ReadUniformFingerprintProperty<bool>(blockFont, "Italic");
+        }
+        if (TryGetProperty(fingerprintBlock, "FormatConditions", out blockConditions) && blockConditions is not null)
+          noFormatConditions = TryGetProperty(blockConditions, "Count", out var conditionCount) && conditionCount is 0;
       }
       catch (Exception exception) when (IsAutomationFailure(exception))
       {
@@ -1691,8 +1705,7 @@ public sealed class ExcelRowMutationService
       }
       if (hasValues) StageMeasured?.Invoke("Fingerprint.Value2.Bulk", 0);
       if (hasFormulas) StageMeasured?.Invoke("Fingerprint.Formula.Bulk", 0);
-      if (numberFormat is string) StageMeasured?.Invoke("Fingerprint.NumberFormat.Bulk", 0);
-      if (wrapText is bool) StageMeasured?.Invoke("Fingerprint.WrapText.Bulk", 0);
+      if (noFormatConditions) StageMeasured?.Invoke("Fingerprint.FormatConditions.Bulk", 0);
       var builder = new StringBuilder();
       if (includeWorksheetExtent)
       {
@@ -1732,19 +1745,17 @@ public sealed class ExcelRowMutationService
             else AppendFingerprintProperty(builder, cell, "Value2", reportFallback: true);
             if (hasFormulas) AppendFingerprintValue(builder, MatrixValue(formulas, row - startRow, column - firstColumn, count, columnCount));
             else AppendFingerprintProperty(builder, cell, "Formula", reportFallback: true);
-            if (numberFormat is string uniformFormat) AppendFingerprintValue(builder, uniformFormat);
-            else AppendFingerprintProperty(builder, cell, "NumberFormat", reportFallback: true);
+            AppendFingerprintProperty(builder, cell, "NumberFormat", reportFallback: true, uniformValue: numberFormat);
             AppendFingerprintProperty(builder, cell, "Style");
-            if (wrapText is bool uniformWrap) AppendFingerprintValue(builder, uniformWrap);
-            else AppendFingerprintProperty(builder, cell, "WrapText", reportFallback: true);
-            AppendFingerprintProperty(builder, cell, "HorizontalAlignment");
-            AppendFingerprintProperty(builder, cell, "VerticalAlignment");
+            AppendFingerprintProperty(builder, cell, "WrapText", reportFallback: true, uniformValue: wrapText);
+            AppendFingerprintProperty(builder, cell, "HorizontalAlignment", reportFallback: true, uniformValue: horizontalAlignment);
+            AppendFingerprintProperty(builder, cell, "VerticalAlignment", reportFallback: true, uniformValue: verticalAlignment);
             if (TryGetProperty(cell!, "Font", out font) && font is not null)
             {
-              AppendFingerprintProperty(builder, font, "Name");
-              AppendFingerprintProperty(builder, font, "Size");
-              AppendFingerprintProperty(builder, font, "Bold");
-              AppendFingerprintProperty(builder, font, "Italic");
+              AppendFingerprintProperty(builder, font, "Name", reportFallback: true, uniformValue: fontName);
+              AppendFingerprintProperty(builder, font, "Size", reportFallback: true, uniformValue: fontSize);
+              AppendFingerprintProperty(builder, font, "Bold", reportFallback: true, uniformValue: fontBold);
+              AppendFingerprintProperty(builder, font, "Italic", reportFallback: true, uniformValue: fontItalic);
               AppendFingerprintProperty(builder, font, "Color");
             }
             if (TryGetProperty(cell!, "Interior", out interior) && interior is not null)
@@ -1758,7 +1769,8 @@ public sealed class ExcelRowMutationService
               AppendFingerprintProperty(builder, validation, "Formula1");
               AppendFingerprintProperty(builder, validation, "Formula2");
             }
-            if (TryGetProperty(cell!, "FormatConditions", out conditions) && conditions is not null)
+            if (noFormatConditions) AppendFingerprintValue(builder, 0);
+            else if (TryGetProperty(cell!, "FormatConditions", out conditions) && conditions is not null)
             {
               AppendFingerprintProperty(builder, conditions, "Count");
             }
@@ -1778,6 +1790,7 @@ public sealed class ExcelRowMutationService
     }
     finally
     {
+      ComRelease.Release(blockConditions); ComRelease.Release(blockFont);
       ComRelease.Release(fingerprintBlock); ComRelease.Release(blockLast); ComRelease.Release(blockFirst);
       ComRelease.Release(rows);
       ComRelease.Release(usedRows);
@@ -1786,8 +1799,22 @@ public sealed class ExcelRowMutationService
     }
   }
 
-  private static void AppendFingerprintProperty(StringBuilder builder, object? target, string propertyName, bool reportFallback = false)
+  private static object? ReadUniformFingerprintProperty<T>(object target, string propertyName)
   {
+    // Mixed or unreadable properties must retain the original per-cell reads.
+    if (!TryGetProperty(target, propertyName, out var value) || value is not T) return null;
+    StageMeasured?.Invoke($"Fingerprint.{propertyName}.Bulk", 0);
+    return value;
+  }
+
+  private static void AppendFingerprintProperty(StringBuilder builder, object? target, string propertyName,
+    bool reportFallback = false, object? uniformValue = null)
+  {
+    if (uniformValue is not null)
+    {
+      AppendFingerprintValue(builder, uniformValue);
+      return;
+    }
     if (reportFallback) StageMeasured?.Invoke($"Fingerprint.{propertyName}.CellFallback", 0);
     if (target is null)
     {
