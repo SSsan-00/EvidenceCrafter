@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Runtime.CompilerServices;
 using EvidenceCrafter.Excel;
 using EvidenceCrafter.Core.Models;
 
@@ -74,6 +75,50 @@ public sealed class RowSafetyReadTests
   {
     public int Reads { get; private set; }
     public object? Value { get { Reads++; return value; } }
+  }
+
+  [TestMethod]
+  [DataRow(true, true)]
+  [DataRow(true, false)]
+  [DataRow(false, true)]
+  public void ColumnFingerprintFormats_PreserveUnknownsAndReadOnlyMissingProperties(bool readFormat, bool readWrap)
+  {
+    var read = typeof(ExcelRowMutationService).GetMethod("ReadColumnFingerprintFormats", BindingFlags.Static | BindingFlags.NonPublic)!;
+    var block = new ColumnFormatBlock();
+    var result = ((object? NumberFormat, object? WrapText)[])read.Invoke(null, [block, 4, readFormat, readWrap])!;
+    Assert.AreEqual(readFormat ? "@" : null, result[0].NumberFormat);
+    Assert.AreEqual(readWrap ? (object)false : null, result[0].WrapText);
+    Assert.AreEqual((null, null), result[1]);
+    Assert.AreEqual((null, null), result[2]);
+    Assert.IsNull(result[3].NumberFormat);
+    Assert.AreEqual(readWrap ? (object)true : null, result[3].WrapText);
+    Assert.AreEqual(readFormat ? 1 : 0, block.Uniform.FormatReads);
+    Assert.AreEqual(readWrap ? 1 : 0, block.Uniform.WrapReads);
+  }
+
+  public sealed class ColumnFormatBlock
+  {
+    public ColumnFormat Uniform { get; } = new("@", false);
+    [IndexerName("Columns")]
+    public ColumnFormat this[int index] => index switch
+    {
+      1 => Uniform,
+      2 => throw new COMException("Column unavailable"),
+      3 => new(null, DBNull.Value),
+      4 => new(null, true, unreadableFormat: true),
+      _ => throw new ArgumentOutOfRangeException(nameof(index)),
+    };
+  }
+
+  public sealed class ColumnFormat(object? format, object? wrap, bool unreadableFormat = false)
+  {
+    public int FormatReads { get; private set; }
+    public int WrapReads { get; private set; }
+    public object? NumberFormat
+    {
+      get { FormatReads++; return unreadableFormat ? throw new COMException("Format unavailable") : format; }
+    }
+    public object? WrapText { get { WrapReads++; return wrap; } }
   }
 
   public sealed class UnreadableRow

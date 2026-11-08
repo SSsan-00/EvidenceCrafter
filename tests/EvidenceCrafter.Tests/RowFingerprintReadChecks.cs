@@ -8,10 +8,19 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   private static void VerifyRowFingerprintReads(object sheet)
   {
     var capture = typeof(ExcelRowMutationService).GetMethod("CaptureRowFingerprint", BindingFlags.Static | BindingFlags.NonPublic)!;
-    string Compare(string scenario)
+    var reads = new Dictionary<string, int>();
+    string Compare(string scenario, int count = 2)
     {
-      var expected = CaptureLegacyFingerprint(sheet, 7, 2, true);
-      var actual = (string)capture.Invoke(null, [sheet, 7, 2, true])!;
+      var expected = CaptureLegacyFingerprint(sheet, 7, count, true);
+      reads.Clear();
+      var previousObserver = ExcelRowMutationService.StageMeasured;
+      string actual;
+      try
+      {
+        ExcelRowMutationService.StageMeasured = (stage, _) => reads[stage] = reads.GetValueOrDefault(stage) + 1;
+        actual = (string)capture.Invoke(null, [sheet, 7, count, true])!;
+      }
+      finally { ExcelRowMutationService.StageMeasured = previousObserver; }
       Assert.AreEqual(expected, actual, scenario);
       return actual;
     }
@@ -80,6 +89,31 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.AreEqual(baseline, Compare("removed validation"));
       }
       finally { Release(validation); Release(conditions); }
+
+      SetProperty(range, "NumberFormat", "0.00");
+      SetProperty(range, "WrapText", false);
+      SetRangeProperty(sheet, "AA7:AA8", "NumberFormat", "@");
+      SetRangeProperty(sheet, "AA7:AA8", "WrapText", true);
+      SetRangeProperty(sheet, "AA9", "NumberFormat", "0%");
+      SetRangeProperty(sheet, "AA9", "WrapText", false);
+      var columnUniform = Compare("formats uniform within each column, different outside fingerprint rows");
+      Assert.AreEqual(4, reads.GetValueOrDefault("Fingerprint.NumberFormat.Bulk"));
+      Assert.AreEqual(4, reads.GetValueOrDefault("Fingerprint.WrapText.Bulk"));
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.NumberFormat.CellFallback"));
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.WrapText.CellFallback"));
+      SetProperty(cell, "NumberFormat", "0.0");
+      SetProperty(cell, "WrapText", false);
+      Assert.AreNotEqual(columnUniform, Compare("mixed values within one column"));
+      Assert.AreEqual(2, reads.GetValueOrDefault("Fingerprint.NumberFormat.CellFallback"));
+      Assert.AreEqual(2, reads.GetValueOrDefault("Fingerprint.WrapText.CellFallback"));
+      SetRangeProperty(sheet, "Z7:AC7", "NumberFormat", "0.00");
+      SetRangeProperty(sheet, "Z7:AC7", "WrapText", false);
+      SetRangeProperty(sheet, "Z8:AC8", "NumberFormat", "@");
+      SetRangeProperty(sheet, "Z8:AC8", "WrapText", true);
+      _ = Compare("every column has mixed formats");
+      Assert.AreEqual(8, reads.GetValueOrDefault("Fingerprint.NumberFormat.CellFallback"));
+      Assert.AreEqual(8, reads.GetValueOrDefault("Fingerprint.WrapText.CellFallback"));
+      _ = Compare("single row", count: 1);
 
       var merged = GetRequiredProperty(sheet, "Range", "Z7:AA7");
       try

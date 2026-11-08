@@ -1706,6 +1706,9 @@ public sealed class ExcelRowMutationService
       if (hasValues) StageMeasured?.Invoke("Fingerprint.Value2.Bulk", 0);
       if (hasFormulas) StageMeasured?.Invoke("Fingerprint.Formula.Bulk", 0);
       if (noFormatConditions) StageMeasured?.Invoke("Fingerprint.FormatConditions.Bulk", 0);
+      var columnFormats = fingerprintBlock is not null && count > 1 && (numberFormat is null || wrapText is null)
+        ? ReadColumnFingerprintFormats(fingerprintBlock, columnCount, numberFormat is null, wrapText is null)
+        : null;
       var builder = new StringBuilder();
       if (includeWorksheetExtent)
       {
@@ -1745,9 +1748,11 @@ public sealed class ExcelRowMutationService
             else AppendFingerprintProperty(builder, cell, "Value2", reportFallback: true);
             if (hasFormulas) AppendFingerprintValue(builder, MatrixValue(formulas, row - startRow, column - firstColumn, count, columnCount));
             else AppendFingerprintProperty(builder, cell, "Formula", reportFallback: true);
-            AppendFingerprintProperty(builder, cell, "NumberFormat", reportFallback: true, uniformValue: numberFormat);
+            AppendFingerprintProperty(builder, cell, "NumberFormat", reportFallback: true,
+              uniformValue: numberFormat ?? columnFormats?[column - firstColumn].NumberFormat);
             AppendFingerprintProperty(builder, cell, "Style");
-            AppendFingerprintProperty(builder, cell, "WrapText", reportFallback: true, uniformValue: wrapText);
+            AppendFingerprintProperty(builder, cell, "WrapText", reportFallback: true,
+              uniformValue: wrapText ?? columnFormats?[column - firstColumn].WrapText);
             AppendFingerprintProperty(builder, cell, "HorizontalAlignment", reportFallback: true, uniformValue: horizontalAlignment);
             AppendFingerprintProperty(builder, cell, "VerticalAlignment", reportFallback: true, uniformValue: verticalAlignment);
             if (TryGetProperty(cell!, "Font", out font) && font is not null)
@@ -1797,6 +1802,29 @@ public sealed class ExcelRowMutationService
       ComRelease.Release(usedColumns);
       ComRelease.Release(usedRange);
     }
+  }
+
+  private static (object? NumberFormat, object? WrapText)[] ReadColumnFingerprintFormats(
+    object block, int columnCount, bool readNumberFormat, bool readWrapText)
+  {
+    var result = new (object? NumberFormat, object? WrapText)[columnCount];
+    for (var index = 0; index < columnCount; index++)
+    {
+      object? column = null;
+      try
+      {
+        // Limit each read to the fingerprint rows, not the entire worksheet column.
+        column = GetRequiredProperty(block, "Columns", index + 1);
+        if (readNumberFormat) result[index].NumberFormat = ReadUniformFingerprintProperty<string>(column, "NumberFormat");
+        if (readWrapText) result[index].WrapText = ReadUniformFingerprintProperty<bool>(column, "WrapText");
+      }
+      catch (Exception exception) when (IsAutomationFailure(exception))
+      {
+        // A failed column read retains the cell-by-cell fallback for that column.
+      }
+      finally { ComRelease.Release(column); }
+    }
+    return result;
   }
 
   private static object? ReadUniformFingerprintProperty<T>(object target, string propertyName)
