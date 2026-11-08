@@ -24,11 +24,15 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     var position = Environment.GetEnvironmentVariable("EVIDENCECRAFTER_PERF_POSITION") ?? "front";
     var format = Environment.GetEnvironmentVariable("EVIDENCECRAFTER_PERF_FORMAT") ?? "uniform";
     var deletion = Environment.GetEnvironmentVariable("EVIDENCECRAFTER_PERF_DELETION") ?? "few";
+    var newImages = int.Parse(Environment.GetEnvironmentVariable("EVIDENCECRAFTER_PERF_NEW_IMAGES") ?? "1", CultureInfo.InvariantCulture);
+    var largeOld = Environment.GetEnvironmentVariable("EVIDENCECRAFTER_PERF_LARGE_OLD") == "1";
+    var separateCases = Environment.GetEnvironmentVariable("EVIDENCECRAFTER_PERF_SEPARATE_CASES") == "1";
     Assert.IsTrue(counts.Length > 0 && counts.All(count => count is >= 0 and <= 500));
     Assert.IsTrue(samples is >= 1 and <= 100 && warmups is >= 0 and <= 10);
     Assert.IsTrue(position is "front" or "middle" or "back");
     Assert.IsTrue(format is "uniform" or "mixed");
     Assert.IsTrue(deletion is "none" or "few" or "many");
+    Assert.IsTrue(newImages is >= 1 and <= 10);
     foreach (var count in counts)
     {
       var measurements = new List<BackfillMeasurement>();
@@ -40,12 +44,13 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           // Every sample owns a fresh process, workbook and fixture. Startup and
           // teardown remain supervised, but are outside the operation stopwatch.
           RunSupervisedScenario(Scenario.SameSidePerformance, (sheet, identity, path) =>
-            measurement = MeasureSameSidePerformance(sheet, identity, path, count, position, format, deletion));
+            measurement = MeasureSameSidePerformance(sheet, identity, path, count, position, format, deletion, newImages, largeOld, separateCases));
           Assert.IsNotNull(measurement);
           ReportPerformance(JsonSerializer.Serialize(new
           {
             Kind = "sample", Count = count, Iteration = iteration, Warmup = iteration < warmups,
-            Position = position, Format = format, Deletion = deletion, Measurement = measurement,
+            Position = position, Format = format, Deletion = deletion, NewImages = newImages, LargeOld = largeOld,
+            SeparateCases = separateCases, Measurement = measurement,
           }));
           if (iteration >= warmups) measurements.Add(measurement);
         }
@@ -54,7 +59,8 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
           ReportPerformance(JsonSerializer.Serialize(new
           {
             Kind = "failure", Count = count, Iteration = iteration, Position = position,
-            Format = format, Deletion = deletion, Error = exception.ToString(),
+            Format = format, Deletion = deletion, NewImages = newImages, LargeOld = largeOld,
+            SeparateCases = separateCases, Error = exception.ToString(),
           }));
           throw;
         }
@@ -67,6 +73,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       ReportPerformance(JsonSerializer.Serialize(new
       {
         Kind = "summary", Count = count, Samples = samples, Position = position, Format = format, Deletion = deletion,
+        NewImages = newImages, LargeOld = largeOld, SeparateCases = separateCases,
         PreviewMedian = Median(item => item.Preview), PlacementMedian = Median(item => item.Placement),
         CleanupMedian = Median(item => item.Cleanup), NavigationMedian = Median(item => item.Navigation),
         TotalMedian = Median(item => item.Total), TotalMaximum = measurements.Max(item => item.Total),
@@ -82,7 +89,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   }
 
   private static BackfillMeasurement MeasureSameSidePerformance(object sheet, WorkbookIdentity identity,
-    string imagePath, int shapeCount, string position, string format, string deletion)
+    string imagePath, int shapeCount, string position, string format, string deletion, int newImages, bool largeOld, bool separateCases)
   {
     var caseRow = position switch { "middle" => 703, "back" => 1503, _ => 3 };
     var nextRow = caseRow + (deletion == "many" ? 50 : 10);
@@ -102,11 +109,27 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     SetCellValue(sheet, caseRow, 2, caseRow == 3 ? 1 : 2);
     SetCellValue(sheet, nextRow, 1, 1);
     SetCellValue(sheet, nextRow, 2, caseRow == 3 ? 2 : 3);
+    if (separateCases)
+      for (var index = 2; index <= newImages; index++)
+      {
+        SetCellValue(sheet, caseRow + (nextRow - caseRow) * index, 1, 1);
+        SetCellValue(sheet, caseRow + (nextRow - caseRow) * index, 2, (caseRow == 3 ? 1 : 2) + index);
+      }
     using (var bitmap = new Bitmap(120, 80)) bitmap.Save(imagePath, ImageFormat.Png);
     var images = new[] { new AutomaticPlacementImage(imagePath, new ImageDimensions(120, 80)) };
     var service = new ExcelAutomaticPlacementService();
-    var first = service.PlaceImages(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: caseLabel);
-    Assert.IsTrue(first.Succeeded, first.Message);
+    for (var index = 0; index < newImages; index++)
+    {
+      var label = separateCases ? $"1-{(caseRow == 3 ? 1 : 2) + index}" : caseLabel;
+      var first = service.PlaceImages(identity, "OtherTarget", EvidenceSide.New, images, requestedCaseLabel: label);
+      Assert.IsTrue(first.Succeeded, first.Message);
+    }
+    if (largeOld)
+    {
+      using var bitmap = new Bitmap(180, 240);
+      bitmap.Save(imagePath, ImageFormat.Png);
+      images = [new AutomaticPlacementImage(imagePath, new ImageDimensions(180, 240))];
+    }
     object? shapes = null;
     try
     {

@@ -15,6 +15,9 @@ CASE末尾整理の追加高速化・復旧用退避・故障注入の結果は
 列ごとに異なる書式の状態照合と追加性能監査は
 [2026-11-08の検証記録](review-performance-2026-11-08.md) を参照。
 
+片側への複数枚配置後に反対側へ貼り付ける処理の調査と書式照合の追加改善は
+[後追い配置の検証記録](review-opposite-side-performance-2026-11-08.md) を参照。
+
 ## 通常テスト
 
 `EvidenceCrafter.Tests` はExcelなしで動くCoreテストを既定とする。
@@ -60,6 +63,8 @@ dotnet test tests\EvidenceCrafter.Tests -c Release --no-build --filter 'FullyQua
 ```
 
 条件変更用の環境変数は`EVIDENCECRAFTER_PERF_COUNTS`（既定`0,50,200,500`）、`EVIDENCECRAFTER_PERF_SAMPLES`（10）、`EVIDENCECRAFTER_PERF_WARMUPS`（1）、`EVIDENCECRAFTER_PERF_POSITION`（`front`／`middle`／`back`）、`EVIDENCECRAFTER_PERF_FORMAT`（`uniform`／`mixed`）、`EVIDENCECRAFTER_PERF_DELETION`（`few`／`many`／`none`）。JSONLは追記するため、比較する版ごとに別ファイルを指定する。Excelを使うテストは同時に実行せず、性能計測中はビルドもしない。
+
+複数枚の後追いは`EVIDENCECRAFTER_PERF_NEW_IMAGES=4`で再現する（既定1、上限10）。`EVIDENCECRAFTER_PERF_SEPARATE_CASES=1`ならNEW画像を別々のCASEに配置し、既定では同じCASEに配置する。`EVIDENCECRAFTER_PERF_LARGE_OLD=1`なら後から置くOLD画像を大きくして、参照画像の拡大と行追加も測る。複数枚では`DELETION=many`を使用し、安全な末尾行削除が実行されたことをassertする。
 
 参照Workbookを使う場合は次を必須とする。
 

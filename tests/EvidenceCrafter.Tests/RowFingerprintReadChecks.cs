@@ -40,6 +40,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       SetProperty(font, "Italic", false);
       SetProperty(font, "Color", 0);
       var baseline = Compare("uniform formatting");
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.CellFallback"));
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.Font.CellFallback"));
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.Interior.CellFallback"));
+      Assert.AreEqual(1, reads.GetValueOrDefault("Fingerprint.Validation.Empty"));
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.Validation.CellFallback"));
 
       foreach (var (property, original, changed) in new (string, object, object)[]
       {
@@ -72,8 +77,35 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.AreNotEqual(baseline, Compare("mixed font within a cell"));
         SetProperty(characterFont, "Bold", false);
         Assert.AreEqual(baseline, Compare("restored rich text"));
+        SetProperty(characterFont, "Color", 255);
+        _ = Compare("mixed font colors within a cell");
+        SetProperty(characterFont, "Color", 0);
+        Assert.AreEqual(baseline, Compare("restored rich text color"));
       }
       finally { Release(characterFont); Release(characters); }
+
+      var interior = GetRequiredProperty(range, "Interior");
+      var cellInterior = GetRequiredProperty(cell, "Interior");
+      try
+      {
+        foreach (var color in new[] { 255, 0, 16777215 })
+        {
+          SetProperty(interior, "Color", color);
+          var uniform = Compare("uniform fill " + color);
+          Assert.AreEqual(color == 0 ? 8 : 0, reads.GetValueOrDefault("Fingerprint.Interior.CellFallback"));
+          SetProperty(cellInterior, "Color", color == 255 ? 65280 : 255);
+          Assert.AreNotEqual(uniform, Compare("mixed fill " + color));
+          Assert.AreEqual(8, reads.GetValueOrDefault("Fingerprint.Interior.CellFallback"));
+          SetProperty(interior, "Color", color);
+          Assert.AreEqual(uniform, Compare("restored fill " + color));
+        }
+        SetProperty(cellInterior, "Pattern", 9);
+        _ = Compare("mixed fill pattern");
+        Assert.AreEqual(8, reads.GetValueOrDefault("Fingerprint.Interior.CellFallback"));
+        SetProperty(interior, "Pattern", -4142);
+        Assert.AreEqual(baseline, Compare("removed fill"));
+      }
+      finally { Release(cellInterior); Release(interior); }
 
       var conditions = GetRequiredProperty(cell, "FormatConditions");
       var validation = GetRequiredProperty(cell, "Validation");
@@ -85,8 +117,25 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         Assert.AreEqual(baseline, Compare("removed conditional formatting"));
         _ = InvokeMethod(validation, "Add", 1, 1, 1, "1", "10");
         Assert.AreNotEqual(baseline, Compare("validation on one cell"));
+        Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.Validation.Empty"));
+        Assert.AreEqual(8, reads.GetValueOrDefault("Fingerprint.Validation.CellFallback"));
         _ = InvokeMethod(validation, "Delete");
         Assert.AreEqual(baseline, Compare("removed validation"));
+        Assert.AreEqual(1, reads.GetValueOrDefault("Fingerprint.Validation.Empty"));
+        _ = InvokeMethod(validation, "Add", 0);
+        Assert.AreNotEqual(baseline, Compare("input-message-only validation"));
+        Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.Validation.Empty"));
+        _ = InvokeMethod(validation, "Delete");
+
+        var outside = GetRequiredProperty(sheet, "Range", "AA9");
+        var outsideValidation = GetRequiredProperty(outside, "Validation");
+        try
+        {
+          _ = InvokeMethod(outsideValidation, "Add", 1, 1, 1, "1", "10");
+          _ = Compare("validation outside fingerprint rows");
+          Assert.AreEqual(1, reads.GetValueOrDefault("Fingerprint.Validation.Empty"));
+        }
+        finally { _ = InvokeMethod(outsideValidation, "Delete"); Release(outsideValidation); Release(outside); }
       }
       finally { Release(validation); Release(conditions); }
 
@@ -101,6 +150,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       Assert.AreEqual(4, reads.GetValueOrDefault("Fingerprint.WrapText.Bulk"));
       Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.NumberFormat.CellFallback"));
       Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.WrapText.CellFallback"));
+      Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.CellFallback"));
       SetProperty(cell, "NumberFormat", "0.0");
       SetProperty(cell, "WrapText", false);
       Assert.AreNotEqual(columnUniform, Compare("mixed values within one column"));
@@ -122,6 +172,22 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
         _ = Compare("merged cells");
       }
       finally { Release(merged); }
+
+      var workbook = GetRequiredProperty(sheet, "Parent");
+      var styles = GetRequiredProperty(workbook, "Styles");
+      var customStyle = InvokeMethod(styles, "Add", "FingerprintTestStyle")!;
+      try
+      {
+        SetProperty(cell, "Style", "FingerprintTestStyle");
+        _ = Compare("mixed cell styles");
+        Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.Style.Bulk"));
+        Assert.AreEqual(8, reads.GetValueOrDefault("Fingerprint.CellFallback"));
+        SetProperty(range, "Style", "FingerprintTestStyle");
+        _ = Compare("uniform custom style");
+        Assert.AreEqual(1, reads.GetValueOrDefault("Fingerprint.Style.Bulk"));
+        Assert.AreEqual(0, reads.GetValueOrDefault("Fingerprint.CellFallback"));
+      }
+      finally { Release(customStyle); Release(styles); ReleaseOnce(workbook); }
     }
     finally { Release(cellFont); Release(cell); Release(font); Release(range); }
   }

@@ -1660,7 +1660,8 @@ public sealed class ExcelRowMutationService
     object? usedColumns = null;
     object? usedRows = null;
     object? rows = null;
-    object? fingerprintBlock = null, blockFirst = null, blockLast = null, blockFont = null, blockConditions = null;
+    object? fingerprintBlock = null, blockFirst = null, blockLast = null, blockFont = null, blockInterior = null, blockConditions = null;
+    object? blockStyle = null;
     try
     {
       usedRange = GetRequiredProperty(worksheet, "UsedRange");
@@ -1674,8 +1675,11 @@ public sealed class ExcelRowMutationService
       }
       object? values = null, formulas = null, numberFormat = null, wrapText = null;
       object? horizontalAlignment = null, verticalAlignment = null;
-      object? fontName = null, fontSize = null, fontBold = null, fontItalic = null;
+      object? fontName = null, fontSize = null, fontBold = null, fontItalic = null, fontColor = null;
+      object? interiorColor = null, interiorPattern = null;
+      string? style = null;
       var noFormatConditions = false;
+      var noValidation = false;
       var hasValues = false;
       var hasFormulas = false;
       try
@@ -1689,15 +1693,30 @@ public sealed class ExcelRowMutationService
         wrapText = ReadUniformFingerprintProperty<bool>(fingerprintBlock, "WrapText");
         horizontalAlignment = ReadUniformFingerprintProperty<int>(fingerprintBlock, "HorizontalAlignment");
         verticalAlignment = ReadUniformFingerprintProperty<int>(fingerprintBlock, "VerticalAlignment");
+        if (TryGetProperty(fingerprintBlock, "Style", out blockStyle) && blockStyle is not null &&
+          (blockStyle is string || Marshal.IsComObject(blockStyle)))
+        {
+          style = Convert.ToString(blockStyle, CultureInfo.InvariantCulture);
+          StageMeasured?.Invoke("Fingerprint.Style.Bulk", 0);
+        }
         if (TryGetProperty(fingerprintBlock, "Font", out blockFont) && blockFont is not null)
         {
           fontName = ReadUniformFingerprintProperty<string>(blockFont, "Name");
           fontSize = ReadUniformFingerprintProperty<double>(blockFont, "Size");
           fontBold = ReadUniformFingerprintProperty<bool>(blockFont, "Bold");
           fontItalic = ReadUniformFingerprintProperty<bool>(blockFont, "Italic");
+          fontColor = ReadUniformFingerprintProperty<double>(blockFont, "Color");
+        }
+        if (TryGetProperty(fingerprintBlock, "Interior", out blockInterior) && blockInterior is not null)
+        {
+          interiorColor = ReadUniformFingerprintProperty<double>(blockInterior, "Color");
+          // Interior.Color also returns zero for mixed fills; black must use cell reads.
+          if (interiorColor is 0d) interiorColor = null;
+          interiorPattern = ReadUniformFingerprintProperty<int>(blockInterior, "Pattern");
         }
         if (TryGetProperty(fingerprintBlock, "FormatConditions", out blockConditions) && blockConditions is not null)
           noFormatConditions = TryGetProperty(blockConditions, "Count", out var conditionCount) && conditionCount is 0;
+        noValidation = RangeHasNoValidation(fingerprintBlock);
       }
       catch (Exception exception) when (IsAutomationFailure(exception))
       {
@@ -1706,9 +1725,18 @@ public sealed class ExcelRowMutationService
       if (hasValues) StageMeasured?.Invoke("Fingerprint.Value2.Bulk", 0);
       if (hasFormulas) StageMeasured?.Invoke("Fingerprint.Formula.Bulk", 0);
       if (noFormatConditions) StageMeasured?.Invoke("Fingerprint.FormatConditions.Bulk", 0);
+      if (noValidation) StageMeasured?.Invoke("Fingerprint.Validation.Empty", 0);
       var columnFormats = fingerprintBlock is not null && count > 1 && (numberFormat is null || wrapText is null)
         ? ReadColumnFingerprintFormats(fingerprintBlock, columnCount, numberFormat is null, wrapText is null)
         : null;
+      var hasUniformFont = fontName is not null && fontSize is not null && fontBold is not null &&
+        fontItalic is not null && fontColor is not null;
+      var hasUniformInterior = interiorColor is not null && interiorPattern is not null;
+      var canReadCellsInBulk = hasValues && hasFormulas && noValidation && noFormatConditions &&
+        hasUniformFont && hasUniformInterior && style is not null &&
+        horizontalAlignment is not null && verticalAlignment is not null &&
+        (numberFormat is not null || columnFormats?.All(format => format.NumberFormat is not null) == true) &&
+        (wrapText is not null || columnFormats?.All(format => format.WrapText is not null) == true);
       var builder = new StringBuilder();
       if (includeWorksheetExtent)
       {
@@ -1743,33 +1771,41 @@ public sealed class ExcelRowMutationService
           object? conditions = null;
           try
           {
-            cell = InvokeProperty(worksheet, "Cells", row, column);
+            if (!canReadCellsInBulk)
+            {
+              cell = InvokeProperty(worksheet, "Cells", row, column);
+              StageMeasured?.Invoke("Fingerprint.CellFallback", 0);
+            }
             if (hasValues) AppendFingerprintValue(builder, MatrixValue(values, row - startRow, column - firstColumn, count, columnCount));
             else AppendFingerprintProperty(builder, cell, "Value2", reportFallback: true);
             if (hasFormulas) AppendFingerprintValue(builder, MatrixValue(formulas, row - startRow, column - firstColumn, count, columnCount));
             else AppendFingerprintProperty(builder, cell, "Formula", reportFallback: true);
             AppendFingerprintProperty(builder, cell, "NumberFormat", reportFallback: true,
               uniformValue: numberFormat ?? columnFormats?[column - firstColumn].NumberFormat);
-            AppendFingerprintProperty(builder, cell, "Style");
+            AppendFingerprintProperty(builder, cell, "Style", uniformValue: style);
             AppendFingerprintProperty(builder, cell, "WrapText", reportFallback: true,
               uniformValue: wrapText ?? columnFormats?[column - firstColumn].WrapText);
             AppendFingerprintProperty(builder, cell, "HorizontalAlignment", reportFallback: true, uniformValue: horizontalAlignment);
             AppendFingerprintProperty(builder, cell, "VerticalAlignment", reportFallback: true, uniformValue: verticalAlignment);
-            if (TryGetProperty(cell!, "Font", out font) && font is not null)
+            if (hasUniformFont || (TryGetProperty(cell!, "Font", out font) && font is not null))
             {
+              if (!hasUniformFont) StageMeasured?.Invoke("Fingerprint.Font.CellFallback", 0);
               AppendFingerprintProperty(builder, font, "Name", reportFallback: true, uniformValue: fontName);
               AppendFingerprintProperty(builder, font, "Size", reportFallback: true, uniformValue: fontSize);
               AppendFingerprintProperty(builder, font, "Bold", reportFallback: true, uniformValue: fontBold);
               AppendFingerprintProperty(builder, font, "Italic", reportFallback: true, uniformValue: fontItalic);
-              AppendFingerprintProperty(builder, font, "Color");
+              AppendFingerprintProperty(builder, font, "Color", uniformValue: fontColor);
             }
-            if (TryGetProperty(cell!, "Interior", out interior) && interior is not null)
+            if (hasUniformInterior || (TryGetProperty(cell!, "Interior", out interior) && interior is not null))
             {
-              AppendFingerprintProperty(builder, interior, "Color");
-              AppendFingerprintProperty(builder, interior, "Pattern");
+              if (!hasUniformInterior) StageMeasured?.Invoke("Fingerprint.Interior.CellFallback", 0);
+              AppendFingerprintProperty(builder, interior, "Color", uniformValue: interiorColor);
+              AppendFingerprintProperty(builder, interior, "Pattern", uniformValue: interiorPattern);
             }
-            if (TryGetProperty(cell!, "Validation", out validation) && validation is not null)
+            if (noValidation) builder.Append("<unsupported>;<unsupported>;<unsupported>;");
+            else if (TryGetProperty(cell!, "Validation", out validation) && validation is not null)
             {
+              StageMeasured?.Invoke("Fingerprint.Validation.CellFallback", 0);
               AppendFingerprintProperty(builder, validation, "Type");
               AppendFingerprintProperty(builder, validation, "Formula1");
               AppendFingerprintProperty(builder, validation, "Formula2");
@@ -1795,13 +1831,33 @@ public sealed class ExcelRowMutationService
     }
     finally
     {
-      ComRelease.Release(blockConditions); ComRelease.Release(blockFont);
+      ComRelease.Release(blockConditions); ComRelease.Release(blockInterior); ComRelease.Release(blockFont);
+      ComRelease.Release(blockStyle);
       ComRelease.Release(fingerprintBlock); ComRelease.Release(blockLast); ComRelease.Release(blockFirst);
       ComRelease.Release(rows);
       ComRelease.Release(usedRows);
       ComRelease.Release(usedColumns);
       ComRelease.Release(usedRange);
     }
+  }
+
+  private static bool RangeHasNoValidation(object range)
+  {
+    object? validationCells = null;
+    try
+    {
+      validationCells = InvokeMethod(range, "SpecialCells", -4174); // xlCellTypeAllValidation
+      return false;
+    }
+    catch (Exception exception) when (IsAutomationFailure(exception))
+    {
+      // A generic Excel 1004 error is not proof that validation is absent.
+      // shortcut: other Excel languages retain cell reads until their no-match message is verified.
+      var cause = exception.GetBaseException();
+      return cause is COMException { ErrorCode: unchecked((int)0x800A03EC) } &&
+        cause.Message.Trim() is "No cells were found." or "該当するセルが見つかりません。";
+    }
+    finally { ComRelease.Release(validationCells); }
   }
 
   private static (object? NumberFormat, object? WrapText)[] ReadColumnFingerprintFormats(

@@ -126,4 +126,32 @@ public sealed class RowSafetyReadTests
     public object Value2 => throw new COMException("Read unavailable", unchecked((int)0x80010001));
     public object Formula => throw new COMException("Read unavailable", unchecked((int)0x80010001));
   }
+
+  [TestMethod]
+  public void ValidationAbsence_RequiresTheExplicitExcelNoMatchError()
+  {
+    var read = typeof(ExcelRowMutationService).GetMethod("RangeHasNoValidation", BindingFlags.Static | BindingFlags.NonPublic)!;
+    foreach (var (error, expected) in new (Exception?, bool)[]
+    {
+      (new COMException("No cells were found.", unchecked((int)0x800A03EC)), true),
+      (new COMException("該当するセルが見つかりません。", unchecked((int)0x800A03EC)), true),
+      (new COMException("Unknown Excel failure", unchecked((int)0x800A03EC)), false),
+      (new COMException("No cells were found.", unchecked((int)0x80010001)), false),
+      (new COMException("Aucun résultat", unchecked((int)0x800A03EC)), false),
+      (new InvalidOperationException("No cells were found."), false),
+      (null, false),
+    })
+      Assert.AreEqual(expected, (bool)read.Invoke(null, [new ValidationRange(error)])!);
+    Assert.IsFalse((bool)read.Invoke(null, [new ValidationRange(null, new object())])!);
+  }
+
+  public sealed class ValidationRange(Exception? error, object? result = null)
+  {
+    public object? SpecialCells(int type)
+    {
+      Assert.AreEqual(-4174, type);
+      if (error is not null) throw error;
+      return result;
+    }
+  }
 }
