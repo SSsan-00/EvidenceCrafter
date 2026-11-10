@@ -2439,7 +2439,8 @@ public sealed class MainForm : Form
               images[index].AvailableWidthPoints,
           horizontalMarginPoints,
           images[index].Plan.Image.Scale,
-          images[index].Plan.VerticalOffsetPoints));
+          images[index].Plan.VerticalOffsetPoints,
+          topPointsOverride: referenceResize is null ? null : images[index].Target.TopPoints));
         RecordImagePlacementFailure(placed, recoveryImagePath: imagePath);
         if (rowRecoveryMessage is not null) throw new InvalidOperationException(rowRecoveryMessage);
         if (placed.Succeeded)

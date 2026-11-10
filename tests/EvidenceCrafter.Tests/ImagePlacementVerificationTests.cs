@@ -11,6 +11,15 @@ namespace EvidenceCrafter.Tests;
 public sealed class ImagePlacementVerificationTests
 {
   [TestMethod]
+  public void AbsoluteTop_RejectsInvalidCoordinatesBeforeAccessingExcel()
+  {
+    var workbook = new WorkbookIdentity("test", "test", "test", 0, 0, false);
+    foreach (var top in new[] { -1, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+      Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => new ExcelImagePlacementService().PlaceImage(
+        workbook, "Evidence", new(5, 4), EvidenceSide.New, "image.png", new(120, 60), topPointsOverride: top));
+  }
+
+  [TestMethod]
   public void PositionComparison_PreservesZeroAndRejectsInvalidCoordinates()
   {
     Assert.IsTrue(ExcelImagePlacementService.PositionMatches(0, 0));

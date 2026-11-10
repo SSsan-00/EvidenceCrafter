@@ -35,12 +35,15 @@ public sealed class ExcelImagePlacementService
     double? availableWidthPoints = null,
     double horizontalMarginPoints = 6,
     double? scaleOverride = null,
-    double verticalOffsetPoints = PlacementPlanner.VerticalInsetPoints)
+    double verticalOffsetPoints = PlacementPlanner.VerticalInsetPoints,
+    double? topPointsOverride = null)
   {
     ArgumentNullException.ThrowIfNull(workbook);
     ArgumentException.ThrowIfNullOrWhiteSpace(worksheetName);
     ArgumentException.ThrowIfNullOrWhiteSpace(imagePath);
     verticalOffsetPoints = PlacementPlanner.NormalizeVerticalOffset(verticalOffsetPoints);
+    if (topPointsOverride is { } top && (!double.IsFinite(top) || top < 0))
+      throw new ArgumentOutOfRangeException(nameof(topPointsOverride));
     if (requestedCell is not null && !IsValidCell(requestedCell.Value))
     {
       throw new ArgumentOutOfRangeException(nameof(requestedCell));
@@ -117,7 +120,7 @@ public sealed class ExcelImagePlacementService
             imageDimensions,
             availableWidthPoints,
             horizontalMarginPoints,
-            scaleOverride, verticalOffsetPoints);
+            scaleOverride, verticalOffsetPoints, topPointsOverride);
           return result ?? ImagePlacementResult.Failed("The selected Workbook could not be matched in its Excel instance.");
         }
         catch (Exception exception) when (IsAutomationFailure(exception))
@@ -351,7 +354,8 @@ public sealed class ExcelImagePlacementService
     double? availableWidthPoints,
     double horizontalMarginPoints,
     double? scaleOverride,
-    double verticalOffsetPoints)
+    double verticalOffsetPoints,
+    double? topPointsOverride)
   {
     if (TryGetProperty(runningObject, "Workbooks", out var workbooks))
     {
@@ -382,7 +386,7 @@ public sealed class ExcelImagePlacementService
                 imageDimensions,
                 availableWidthPoints,
                 horizontalMarginPoints,
-                scaleOverride, verticalOffsetPoints);
+                scaleOverride, verticalOffsetPoints, topPointsOverride);
             }
           }
           finally
@@ -424,7 +428,7 @@ public sealed class ExcelImagePlacementService
           imageDimensions,
           availableWidthPoints,
           horizontalMarginPoints,
-          scaleOverride, verticalOffsetPoints)
+          scaleOverride, verticalOffsetPoints, topPointsOverride)
         : null;
     }
     finally
@@ -445,7 +449,8 @@ public sealed class ExcelImagePlacementService
     double? availableWidthPoints,
     double horizontalMarginPoints,
     double? scaleOverride,
-    double verticalOffsetPoints)
+    double verticalOffsetPoints,
+    double? topPointsOverride)
   {
     if (!WorkbookWindowMatchesIdentity(workbook, identity))
     {
@@ -461,6 +466,7 @@ public sealed class ExcelImagePlacementService
     object? shapes = null;
     object? targetCell = null;
     object? shape = null;
+    object? actualTopLeftCell = null;
     var shapeName = $"EST_IMG_{Guid.NewGuid():N}";
     var focusCell = requestedCell;
     var resolvedWorksheetName = worksheetName;
@@ -509,7 +515,7 @@ public sealed class ExcelImagePlacementService
       var fittedImage = scaleOverride is { } scale
         ? imageSizingService.AtScale(imageDimensions, availableWidth, scale)
         : imageSizingService.FitToWidth(imageDimensions, availableWidth);
-      expected = new(cellLeft + horizontalMarginPoints, cellTop + verticalOffsetPoints,
+      expected = new(cellLeft + horizontalMarginPoints, topPointsOverride ?? cellTop + verticalOffsetPoints,
         fittedImage.WidthPoints, fittedImage.HeightPoints);
       appliedScale = fittedImage.Scale;
       if (!expected.IsValid)
@@ -540,7 +546,7 @@ public sealed class ExcelImagePlacementService
         MsoFalse,
         MsoTrue,
         cellLeft + horizontalMarginPoints,
-        cellTop + verticalOffsetPoints,
+        expected.Top,
         fittedImage.WidthPoints,
         fittedImage.HeightPoints);
       if (shape is null)
@@ -575,6 +581,9 @@ public sealed class ExcelImagePlacementService
       if (PlacementGeometryComparison.Exceeds(actual.Width, availableWidth))
         return Fail("挿入画像の幅が配置可能幅を超えているため配置できません。");
 
+      stage = "ReadAnchorCell";
+      actualTopLeftCell = GetRequiredProperty(shape, "TopLeftCell");
+      var placedCell = ReadCellReference(actualTopLeftCell);
       SetProperty(application, "EnableEvents", eventsWereEnabled);
       var focus = focusService.FocusPlacedImage(identity, resolvedWorksheetName, focusCell.Value);
       return new ImagePlacementResult(
@@ -588,7 +597,7 @@ public sealed class ExcelImagePlacementService
           resolvedWorksheetName,
           alternativeText,
           metadata,
-          focusCell.Value,
+          placedCell,
           actual.Left,
           actual.Top,
           actual.Width,
@@ -612,6 +621,7 @@ public sealed class ExcelImagePlacementService
         // The Workbook may have disconnected after the Shape was inserted.
       }
 
+      ComRelease.Release(actualTopLeftCell);
       ComRelease.Release(shape);
       ComRelease.Release(targetCell);
       ComRelease.Release(activeCell);

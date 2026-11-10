@@ -215,7 +215,8 @@ public sealed class ExcelAutomaticPlacementService
           rowHeights,
           ScaleOverride: images[index].ScaleOverride ?? pair?.Scale,
           PreferredStartRow: pair?.StartRow,
-          VerticalOffsetPoints: pair?.VerticalOffsetPoints ?? PlacementPlanner.VerticalInsetPoints));
+          // Excel's Shape.Top can round above its anchor after rows move; reserve space conservatively.
+          VerticalOffsetPoints: pair is null ? PlacementPlanner.VerticalInsetPoints : Math.Max(0, pair.VerticalOffsetPoints)));
         if (pair is not null && plan.StartRow != pair.StartRow)
         {
           pair = pair with
@@ -453,7 +454,8 @@ public sealed class ExcelAutomaticPlacementService
         verifiedStep.AvailableWidthPoints,
         horizontalMarginPoints,
         verifiedStep.Plan.Image.Scale,
-        verifiedStep.Plan.VerticalOffsetPoints);
+        verifiedStep.Plan.VerticalOffsetPoints,
+        topPointsOverride: verifiedStep.Pair?.TargetTopPoints);
       if (!placement.Succeeded)
       {
         if (placement.MutationMayHaveOccurred)
@@ -721,6 +723,8 @@ public sealed class ExcelAutomaticPlacementService
         string.Equals(shape.Name, referenceShapeName, StringComparison.Ordinal) &&
         IsInsideColumns(shape, region));
     if (reference is null) return null;
+    if (!double.IsFinite(reference.VerticalOffsetPoints) || !double.IsFinite(reference.TopPoints) || reference.TopPoints < 0)
+      throw new InvalidOperationException("参照画像の縦位置が不正です。");
     // Old snapshots without picture geometry cannot establish a safe reference scale.
     if (reference.WidthPoints <= 0 || reference.HeightPoints <= 0) return null;
     var remainingWidth = Enumerable.Range(reference.StartColumn, region.LastColumn - reference.StartColumn + 1)
@@ -739,6 +743,7 @@ public sealed class ExcelAutomaticPlacementService
         reference.StartRow, reference.EndRow, reference.SourceDimensions is null)
       {
         VerticalOffsetPoints = reference.VerticalOffsetPoints,
+        TargetTopPoints = reference.TopPoints,
         ReferenceScale = reference.SourceDimensions is { } sourceDimensions
           ? reference.WidthPoints / sourceDimensions.WidthPoints : null,
       };
@@ -752,6 +757,7 @@ public sealed class ExcelAutomaticPlacementService
       reference.StartRow, reference.EndRow, reference.SourceDimensions is null)
     {
       VerticalOffsetPoints = reference.VerticalOffsetPoints,
+      TargetTopPoints = reference.TopPoints,
       ReferenceScale = reference.SourceDimensions is { } sizingSource
         ? commonWidth / sizingSource.WidthPoints : null,
     };

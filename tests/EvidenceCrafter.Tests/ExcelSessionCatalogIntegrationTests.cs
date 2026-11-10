@@ -78,7 +78,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
   public void SplitCaseNumbering_ResolvesPlacesNavigatesAndReplays() =>
     RunSupervisedScenario(Scenario.SplitNumbering);
 
-  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, RowMutationOptimization, RowFingerprints, ImageVerification, SizeCorrection, PlacementAdvance, SplitNumbering }
+  private enum Scenario { Operations, SnapshotReads, RowHeights, PlacementAnalysis, ReferenceAppend, ReferenceNavigation, PairAlignment, PairCollision, SameSideBackfill, SameSidePerformance, SequentialBackfill, RowMutationOptimization, RowFingerprints, ImageVerification, SizeCorrection, PlacementAdvance, SplitNumbering }
 
   private static void VerifySplitCaseNumbering(object sheet, WorkbookIdentity identity, string path)
   {
@@ -141,7 +141,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     Assert.IsFalse(duplicate.Succeeded);
   }
 
-  private static void RunSupervisedScenario(Scenario scenario, Action<object, WorkbookIdentity, string>? performanceSample = null)
+  private static void RunSupervisedScenario(Scenario scenario, Action<object, WorkbookIdentity, string>? customScenario = null)
   {
     Exception? failure = null;
     string? inconclusiveReason = null;
@@ -151,7 +151,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     {
       try
       {
-        RunRealWorkbookScenario(supervisor, scenario, performanceSample);
+        RunRealWorkbookScenario(supervisor, scenario, customScenario);
       }
       catch (OfficeUnavailableException exception)
       {
@@ -174,7 +174,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       thread.SetApartmentState(ApartmentState.STA);
       thread.Start();
       if (!completed.Task.Wait(TimeSpan.FromSeconds(scenario == Scenario.SameSidePerformance ? 900 :
-        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.RowMutationOptimization or Scenario.ImageVerification or Scenario.SizeCorrection or Scenario.PlacementAdvance or Scenario.SplitNumbering ? 180 : 55)))
+        scenario is Scenario.Operations or Scenario.ReferenceAppend or Scenario.SameSideBackfill or Scenario.SequentialBackfill or Scenario.RowMutationOptimization or Scenario.ImageVerification or Scenario.SizeCorrection or Scenario.PlacementAdvance or Scenario.SplitNumbering ? 180 : 55)))
       {
         supervisor.SuppressComCleanup();
         var terminated = supervisor.TryTerminate(out var terminationFailure);
@@ -205,7 +205,7 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     }
   }
 
-  private static void RunRealWorkbookScenario(ScenarioSupervisor supervisor, Scenario scenario, Action<object, WorkbookIdentity, string>? performanceSample = null)
+  private static void RunRealWorkbookScenario(ScenarioSupervisor supervisor, Scenario scenario, Action<object, WorkbookIdentity, string>? customScenario = null)
   {
     T RunExcelSta<T>(Func<T> action) => RunOnSta(
       action,
@@ -281,11 +281,11 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
       {
         VerifyReferenceAppend(workbooks, temporaryDirectory, placementImagePath, scenario == Scenario.ReferenceNavigation);
       }
-      else if (scenario == Scenario.SameSidePerformance)
+      else if (scenario is Scenario.SameSidePerformance or Scenario.SequentialBackfill)
       {
         var identity = new ExcelSessionCatalog().Discover().Workbooks.Single(item =>
           string.Equals(item.FullPath, otherWorkbookPath, StringComparison.OrdinalIgnoreCase));
-        performanceSample!(otherWorksheet, identity, placementImagePath);
+        customScenario!(otherWorksheet, identity, placementImagePath);
       }
       else if (scenario == Scenario.RowMutationOptimization)
       {

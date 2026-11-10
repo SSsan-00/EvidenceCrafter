@@ -327,10 +327,12 @@ public sealed class AutomaticPlacementServiceTests
   }
 
   [TestMethod]
-  public void AnalyzeSnapshot_NormalizesSmallNegativePairOffsetsAndRejectsInvalidValues()
+  [DataRow(false)]
+  [DataRow(true)]
+  public void AnalyzeSnapshot_UsesActualPairTopAndReservesSpaceForNegativeOffsets(bool preserveReferenceSize)
   {
     var signals = FixtureLoader.LoadLayout("default-final-case.json") with { ActiveRow = 3 };
-    foreach (var offset in new[] { -1d, -0.3, 0, 7.25, -1.001, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+    foreach (var offset in new[] { -2.5, -1d, -0.3, 0, 7.25, -1.001, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
     {
       var snapshot = Snapshot(signals) with
       {
@@ -341,12 +343,13 @@ public sealed class AutomaticPlacementServiceTests
         }],
       };
       var result = new ExcelAutomaticPlacementService().AnalyzeSnapshot(snapshot, EvidenceSide.New,
-        [new AutomaticPlacementImage("new.png", new ImageDimensions(100, 50))]);
-      var accepted = double.IsFinite(offset) && offset >= -1;
+        [new AutomaticPlacementImage("new.png", new ImageDimensions(100, 50)) { PreserveReferenceSize = preserveReferenceSize }]);
+      var accepted = double.IsFinite(offset);
       Assert.AreEqual(accepted, result.Succeeded, $"Offset={offset}: {result.Message}");
       if (accepted)
       {
         Assert.AreEqual(Math.Max(0, offset), result.Steps[0].Plan.VerticalOffsetPoints);
+        Assert.AreEqual(snapshot.Shapes[0].TopPoints, result.Steps[0].Pair!.TargetTopPoints);
         Assert.AreEqual(offset, snapshot.Shapes[0].VerticalOffsetPoints);
       }
     }

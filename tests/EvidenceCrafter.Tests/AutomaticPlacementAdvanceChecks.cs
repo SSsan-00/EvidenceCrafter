@@ -29,6 +29,8 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     var directory = Path.Combine(Path.GetDirectoryName(imagePath)!, "advance-ui");
     Directory.CreateDirectory(directory);
     var previousContext = SynchronizationContext.Current;
+    var shutdownState = typeof(WorkbookSessionTokenRegistry).GetField("shutdownStarted", BindingFlags.Static | BindingFlags.NonPublic)!;
+    var previousShutdownState = shutdownState.GetValue(null);
     var form = new MainForm(new ExcelSessionCatalog());
     var formType = typeof(MainForm);
     object Field(string name) => formType.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
@@ -117,6 +119,8 @@ public sealed partial class ExcelSessionCatalogIntegrationTests
     finally
     {
       form.Dispose();
+      // Disposing the test form ends app sessions, but the shared test host must remain usable.
+      shutdownState.SetValue(null, previousShutdownState);
       SynchronizationContext.SetSynchronizationContext(previousContext);
       _ = InvokeMethod(dependencySheet, "Delete");
       Release(dependencySheet); Release(pageSetup); Release(sheets); ReleaseOnce(workbook);

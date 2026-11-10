@@ -1,5 +1,8 @@
 # EvidenceCrafter テスト方針
 
+同一CASEのNEW6枚→OLD6枚、行挿入後の負オフセット、繰り返し再配置は
+[連続配置の検証記録](review-backfill-coordinates-2026-11-10.md)を参照。
+
 2026-09-11のキャプチャ・テキスト編集・最前面機能の検証結果と手動受入手順は
 [実装レビュー](review-capture-editor-window.md) を参照。
 
